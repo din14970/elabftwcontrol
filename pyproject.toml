@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "elabftwcontrol"
-version = "0.0.1"
+version = "0.0.2"
 license = "MIT"
 description = "Package for easily interacting with eLabFTW data from the cli and in Python"
 authors = [
@@ -29,6 +29,7 @@ typer = "^0.9.0"
 openpyxl = "^3.1.2"
 tabulate = "^0.9.0"
 xlsxwriter = "^3.2.0"
+pyyaml = "^6.0.1"
 
 [tool.poetry.group.dev]
 optional = true
