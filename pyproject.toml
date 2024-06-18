@@ -1,0 +1,108 @@
+[tool.poetry]
+name = "elabftwcontrol"
+version = "0.0.1"
+license = "MIT"
+description = "Package for easily interacting with eLabFTW data from the cli and in Python"
+authors = [
+  "Niels Cautaerts <nielscautaerts@hotmail.com>",
+]
+readme = "README.md"
+keywords = ["science", "lab notebooks", "data management"]
+classifiers = [
+  "Topic :: Scientific/Engineering",
+  "Programming Language :: Python :: Implementation :: CPython",
+  "Programming Language :: Python :: 3.10",
+]
+packages = [
+  { include = "elabftwcontrol", from = "src" },
+]
+
+[tool.poetry.scripts]
+elabftwctl = "elabftwcontrol.cli:main"
+
+[tool.poetry.dependencies]
+python = "~3.10"
+elabapi-python = "^0.4.1"
+pydantic = "2.4.2"
+pandas = "^2.0.3"
+typer = "^0.9.0"
+openpyxl = "^3.1.2"
+tabulate = "^0.9.0"
+xlsxwriter = "^3.2.0"
+
+[tool.poetry.group.dev]
+optional = true
+
+[tool.poetry.group.dev.dependencies]
+ruff = "^0.1.5"
+ipykernel = "^6.21.0"
+mypy = "^1.7.0"
+pre-commit = "^3.0.2"
+black = "^23.11.0"
+isort = "^5.12.0"
+types-tabulate = "^0.9.0.3"
+types-pyyaml = "^6.0.12.12"
+pandas-stubs = "^2.1.1.230928"
+types-pytz = "^2023.3.1.1"
+
+[tool.poetry.group.test]
+optional = true
+
+[tool.poetry.group.test.dependencies]
+pytest = "^7.2.2"
+pytest-cov = "^4.0.0"
+pytest-skip-slow = "^0.0.5"
+
+[tool.poetry.group.lsp]
+optional = true
+
+[tool.poetry.group.lsp.dependencies]
+pynvim = "^0.4.3"
+python-lsp-server = "^1.9.0"
+pylsp-mypy = "^0.6.7"
+python-lsp-ruff = "^1.6.0"
+python-lsp-black = "^1.3.0"
+
+[tool.poetry.group.aws]
+optional = true
+
+[tool.poetry.group.aws.dependencies]
+awswrangler = "^3.7.3"
+s3fs = "^2024.3.1"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.black]
+line-length = 88
+target-version = ['py310']
+include = '\.pyi?$'
+
+[tool.isort]
+profile = "black"
+skip_gitignore = true
+
+[tool.mypy]
+plugins = [
+  "pydantic.mypy"
+]
+
+follow_imports = "silent"
+warn_redundant_casts = true
+warn_unused_ignores = true
+show_error_codes = true
+ignore_missing_imports = false
+disallow_untyped_defs = true
+
+[tool.pydantic-mypy]
+init_forbid_extra = true
+init_typed = true
+warn_required_dynamic_aliases = true
+
+[tool.pytest.ini_options]
+minversion = "6.0"
+addopts = "--import-mode=importlib"
+testpaths = [
+    "tests",
+]
