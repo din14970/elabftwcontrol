@@ -17,7 +17,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest]
-        python-version: [3.10, 3.11, 3.12]
+        python-version: ["3.10", "3.11", "3.12"]
     steps:
       - uses: actions/checkout@v4
 
@@ -52,10 +52,11 @@ jobs:
         run: |
           source .venv/bin/activate
           pytest --cov=src tests/
-          coverage report
 
       - name: Generate line coverage
-        run: coverage report --show-missing
+        run: |
+          source .venv/bin/activate
+          coverage report --show-missing
 
       - name: Upload coverage to Coveralls
         uses: AndreMiras/coveralls-python-action@develop
