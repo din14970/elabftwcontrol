@@ -1,7 +1,7 @@
 <p align="left">
 <a href="https://github.com/din14970/elabftwcontrol/actions"><img alt="Actions Status" src="https://github.com/din14970/elabftwcontrol/workflows/build/badge.svg"></a>
-<a href="https://pypi.org/project/elabftwcontrol/"><img alt="PyPI" src="https://img.shields.io/pypi/v/pyMatchSeries.svg?style=flat"></a>
-<a href='https://coveralls.io/github/din14970/pyMatchSeries?branch=master'><img src='https://coveralls.io/repos/github/din14970/pyMatchSeries/badge.svg?branch=master' alt='Coverage Status' /></a>
+<a href="https://pypi.org/project/elabftwcontrol/"><img alt="PyPI" src="https://img.shields.io/pypi/v/elabftwcontrol.svg?style=flat"></a>
+<a href='https://coveralls.io/github/din14970/elabftwcontrol?branch=master'><img src='https://coveralls.io/repos/github/din14970/elabftwcontrol/badge.svg?branch=master' alt='Coverage Status' /></a>
 <a href="https://github.com/psf/black"><img alt="Code style: black" src="https://img.shields.io/badge/code%20style-black-000000.svg"></a>
 </p>
 
