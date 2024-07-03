@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import Any, Dict, Iterable, Protocol, Union, Optional
+from typing import Any, Dict, Iterable, Optional, Protocol, Union
 
 Pathlike = Union[Path, str]
 

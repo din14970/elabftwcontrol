@@ -1,16 +1,16 @@
 from typing import Any, Callable, Sequence, TypeVar
 
-import pytest
 import pandas as pd
+import pytest
 
 from elabftwcontrol.download.metadata import MetadataField
 from elabftwcontrol.download.transformers import (
     CSVElabDataTableTransformer,
     CSVLongMetadataTableTransformer,
-    WideObjectTableData,
     ExcelTransformer,
     JSONTransformer,
     LazyWideTableUtils,
+    WideObjectTableData,
 )
 
 T = TypeVar("T")

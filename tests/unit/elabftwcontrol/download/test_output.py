@@ -14,9 +14,9 @@ from elabftwcontrol.download.output import (
     CSVToStdOutWriter,
     CSVWriter,
     ExcelWriter,
-    SplitDataFrame,
     LineWriter,
     S3TextWriter,
+    SplitDataFrame,
     StdOutWriter,
     TextFileWriter,
 )

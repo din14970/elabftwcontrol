@@ -5,7 +5,7 @@ import io
 import sys
 from enum import Enum
 from pathlib import Path
-from typing import Any, Callable, Iterable, Literal, Optional, Sequence
+from typing import Any, Callable, Iterable, Optional, Sequence
 
 import pandas as pd
 

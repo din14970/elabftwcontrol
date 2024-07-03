@@ -1,8 +1,7 @@
 from __future__ import annotations
-import pandas as pd
-import math
 
 import json
+import math
 from collections import OrderedDict
 from datetime import date, datetime
 from pathlib import Path
@@ -21,6 +20,7 @@ from typing import (
     Union,
 )
 
+import pandas as pd
 from elabapi_python import Experiment, ExperimentTemplate, Item, ItemsType, Link
 from pydantic import (
     BaseModel,
@@ -33,8 +33,8 @@ from pydantic import (
     model_validator,
 )
 
-from elabftwcontrol.defaults import logger
 from elabftwcontrol.client import ElabftwApi, ObjectSyncer
+from elabftwcontrol.defaults import logger
 from elabftwcontrol.types import EntityTypes, SingleObjectTypes, StringAble
 from elabftwcontrol.utils import (
     parse_optional_date,

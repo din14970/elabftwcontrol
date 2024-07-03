@@ -7,6 +7,7 @@ from pydantic import ValidationError
 
 from elabftwcontrol.upload.manifests import (
     BaseMetaField,
+    DependencyGraph,
     ElabObjManifests,
     ExperimentManifest,
     ExperimentSpecManifest,
@@ -41,7 +42,6 @@ from elabftwcontrol.upload.manifests import (
     NestedExtraFieldsManifest,
     Node,
     SimpleExtraFieldsManifest,
-    DependencyGraph,
     _ValueAndUnit,
 )
 
@@ -1819,7 +1819,9 @@ class TestManifestIndex:
                     Node(kind="experiment", id="experiment 1"): set(),
                     Node(kind="experiment", id="experiment 2"): set(
                         [
-                            Node(kind="experiments_template", id="experiment template 1"),
+                            Node(
+                                kind="experiments_template", id="experiment template 1"
+                            ),
                         ]
                     ),
                     Node(kind="items_type", id="item type 1"): set(
@@ -1834,6 +1836,6 @@ class TestManifestIndex:
                     ),
                 },
                 flexible=False,
-            )
+            ),
         )
         assert index == expected

@@ -1,12 +1,12 @@
 from elabftwcontrol.download.api import (
+    IngestConfiguration,
+    IngestJob,
+    MetadataColumns,
+    ObjectTypes,
     OutputFormats,
     TableCellContentType,
-    IngestJob,
-    IngestConfiguration,
-    ObjectTypes,
     TableShapes,
     TableTypes,
-    MetadataColumns,
 )
 
 __all__ = [

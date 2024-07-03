@@ -3,12 +3,12 @@ from __future__ import annotations
 from collections import OrderedDict
 from typing import Dict, Iterable, List, Literal, NamedTuple, Sequence
 
+from elabftwcontrol.client import ObjectSyncer
+from elabftwcontrol.defaults import logger
 from elabftwcontrol.graph import DependencyGraph
 from elabftwcontrol.manifests import Node, ObjectManifest, StateDefinition
 from elabftwcontrol.parsers import ParsedProject
-from elabftwcontrol.client import ObjectSyncer
 from elabftwcontrol.state import ElabState
-from elabftwcontrol.defaults import logger
 
 DefinitionAction = Literal["create", "update", "check"]
 StateAction = Literal["remove"]
@@ -16,6 +16,7 @@ StateAction = Literal["remove"]
 
 class Executor:
     """This class executes plans"""
+
     def __init__(
         self,
         definition: StateDefinition,

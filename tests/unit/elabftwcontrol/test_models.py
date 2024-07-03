@@ -1,9 +1,6 @@
 from datetime import date
-from elabftwcontrol.models import (
-    NO_CATEGORY_NAME,
-    ExtraFieldData,
-    SingleFieldData,
-)
+
+from elabftwcontrol.models import NO_CATEGORY_NAME, ExtraFieldData, SingleFieldData
 
 
 class TestExtraField:

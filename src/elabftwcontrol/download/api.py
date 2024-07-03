@@ -169,7 +169,7 @@ class IngestJob:
 
         if config.categories:
             templates_info = CategoryInfo(getter=api.experiments_templates.iter)
-            template_ids = templates_info.get_ids(categories = config.categories)
+            template_ids = templates_info.get_ids(categories=config.categories)
             templates = [
                 templates_info.categories_map[template_id]
                 for template_id in template_ids

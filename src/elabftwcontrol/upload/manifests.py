@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 from collections import OrderedDict
-from datetime import datetime, date, time
+from datetime import date, datetime, time
 from enum import Enum
 from pathlib import Path
 from typing import (
@@ -752,7 +752,9 @@ class ManifestIndex(NamedTuple):
         for node, experiment_template in experiment_templates.items():
             experiment_template_spec = experiment_template.render_spec()
             experiment_templates_spec[node.id] = experiment_template_spec
-            cls._add_dependencies_to_graph(node, experiment_template_spec, dependency_graph)
+            cls._add_dependencies_to_graph(
+                node, experiment_template_spec, dependency_graph
+            )
 
         items_spec: dict[str, ItemSpecManifest] = {}
 
