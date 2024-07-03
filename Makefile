@@ -11,6 +11,9 @@ lint:
 	ruff ./src
 	mypy .
 
+register-test-repo:
+	poetry config repositories.test-pypi https://test.pypi.org/legacy/
+
 test:
 	pytest -v
 
