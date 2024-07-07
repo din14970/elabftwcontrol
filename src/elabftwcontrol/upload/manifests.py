@@ -24,7 +24,7 @@ from typing import (
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from elabftwcontrol.defaults import logger
+from elabftwcontrol._logging import logger
 from elabftwcontrol.models import ExtraFieldData, SingleFieldData
 from elabftwcontrol.upload.graph import DependencyGraph
 

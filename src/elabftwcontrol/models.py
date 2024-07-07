@@ -34,7 +34,7 @@ from pydantic import (
 )
 
 from elabftwcontrol.client import ElabftwApi, ObjectSyncer
-from elabftwcontrol.defaults import logger
+from elabftwcontrol._logging import logger
 from elabftwcontrol.types import EntityTypes, SingleObjectTypes, StringAble
 from elabftwcontrol.utils import (
     parse_optional_date,

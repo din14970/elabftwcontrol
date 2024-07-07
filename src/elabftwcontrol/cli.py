@@ -13,16 +13,15 @@ from elabftwcontrol.configure import (
     delete_configuration_file,
     list_config_profiles,
 )
-from elabftwcontrol.defaults import DEFAULT_CONFIG_FILE, logger
+from elabftwcontrol._logging import logger
+from elabftwcontrol.defaults import DEFAULT_CONFIG_FILE
 from elabftwcontrol.download import (
     IngestConfiguration,
     IngestJob,
-    MetadataColumns,
     ObjectTypes,
     OutputFormats,
     TableCellContentType,
     TableShapes,
-    TableTypes,
 )
 
 CMD = "elabftwctl"
@@ -142,6 +141,12 @@ def get(
             help="Data format in which the output is represented.",
         ),
     ] = OutputFormats.JSON,
+    id: Annotated[
+        list[int],
+        typer.Option(
+            help="Limit the output to these ids.",
+        ),
+    ] = [],
     output: Annotated[
         Optional[str],
         typer.Option(
@@ -152,43 +157,43 @@ def get(
         ),
     ] = None,
     category: Annotated[
-        Optional[list[str]],
+        list[str],
         typer.Option(
             help="Limit the output to these categories or templates. Provide titles as input.",
         ),
-    ] = None,
+    ] = [],
     indent: Annotated[
         bool,
         typer.Option(
             help="Whether to indent JSON results.",
         ),
     ] = False,
+    expand_metadata: Annotated[
+        bool,
+        typer.Option(
+            help=(
+                "In tabular formats, whether to parse and expand the metadata column."
+            ),
+        ),
+    ] = False,
     table_shape: Annotated[
         TableShapes,
         typer.Option(
             help=(
-                "In tabular formats, whether or not to expand the metadata fields "
+                "In tabular formats, whether or to expand the metadata fields "
                 "into columns or stack the information in rows."
             ),
         ),
     ] = TableShapes.WIDE,
-    table_type: Annotated[
-        TableTypes,
+    use_template_metadata_schema: Annotated[
+        bool,
         typer.Option(
             help=(
-                "In tabular formats, what information/columns to include in the table."
-            ),
-        ),
-    ] = TableTypes.COMBINED,
-    metadata_columns: Annotated[
-        MetadataColumns,
-        typer.Option(
-            help=(
-                "In wide tabular formats, whether to include all fields as columns or only "
+                "In wide tabular formats, whether to limit the columns to "
                 "the fields from the corresponding templates."
             ),
         ),
-    ] = MetadataColumns.ALL,
+    ] = False,
     cell_content: Annotated[
         TableCellContentType,
         typer.Option(
@@ -240,18 +245,18 @@ def get(
         try:
             config = IngestConfiguration(
                 object_type=object_type,
+                ids=id,
                 format=format,
                 output=output,
                 categories=category,
                 indent=indent,
-                table_shape=table_shape,
-                table_type=table_type,
-                metadata_columns=metadata_columns,
+                expand_metadata=expand_metadata,
+                use_template_metadata_schema=use_template_metadata_schema,
                 cell_content=cell_content,
                 sanitize_column_names=sanitize_column_names,
                 glue_table=glue_table,
             )
-            logger.info("Inputs:\n %s" % config.model_dump_json(indent=2))
+            logger.debug("Inputs:\n %s" % config.model_dump_json(indent=2))
             IngestJob(api=api, config=config)()
         except Exception as e:
             logger.critical("%s" % e)

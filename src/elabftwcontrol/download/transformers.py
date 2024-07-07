@@ -18,7 +18,7 @@ from typing import (
 
 import pandas as pd
 
-from elabftwcontrol.defaults import logger
+from elabftwcontrol._logging import logger
 from elabftwcontrol.download.interfaces import Dictable, HasIDAndMetadata
 from elabftwcontrol.download.metadata import (
     MetadataField,
@@ -133,12 +133,6 @@ class _JSONStringTransformer:
         return json.dumps(obj, indent=indent)
 
 
-class TableTypes(str, Enum):
-    OBJECT = "object"
-    METADATA = "metadata"
-    COMBINED = "combined"
-
-
 class TableShapes(str, Enum):
     WIDE = "wide"
     LONG = "long"
@@ -181,9 +175,26 @@ class MultiPandasDataFrameTransformer:
         self.splitter = splitter
 
     @classmethod
+    def for_raw_tables(
+        cls,
+        object_type: ObjectTypes,
+        categories: Optional[Sequence[str]] = None,
+    ) -> MultiPandasDataFrameTransformer:
+        def df_transform_getter(
+            category: Hashable,
+        ) -> Callable[[pd.DataFrame], pd.DataFrame]:
+            return lambda df: df
+
+        splitter = cls._get_splitter(object_type, categories)
+
+        return cls(
+            splitter=splitter,
+            df_transform_getter=df_transform_getter,
+        )
+
+    @classmethod
     def for_long_tables(
         cls,
-        table_type: TableTypes,
         object_type: ObjectTypes,
         categories: Optional[Sequence[str]] = None,
     ) -> MultiPandasDataFrameTransformer:
@@ -191,7 +202,6 @@ class MultiPandasDataFrameTransformer:
             category: Hashable,
         ) -> Callable[[pd.DataFrame], pd.DataFrame]:
             return PandasDataFrameMetadataTransformer.for_long_table(
-                table_type=table_type,
                 object_type=object_type,
             )
 
@@ -205,7 +215,6 @@ class MultiPandasDataFrameTransformer:
     @classmethod
     def for_wide_tables(
         cls,
-        table_type: TableTypes,
         object_type: ObjectTypes,
         categories_metadata_schema: Optional[
             Mapping[str, Optional[Mapping[str, Any]]]
@@ -222,7 +231,6 @@ class MultiPandasDataFrameTransformer:
             else:
                 metadata_schema = categories_metadata_schema.get(category)
             return PandasDataFrameMetadataTransformer.for_wide_table(
-                table_type=table_type,
                 object_type=object_type,
                 cell_content=cell_content,
                 metadata_schema=metadata_schema,
@@ -404,20 +412,19 @@ class PandasDataFrameMetadataTransformer:
     @classmethod
     def for_long_table(
         cls,
-        table_type: TableTypes,
         object_type: ObjectTypes,
     ) -> PandasDataFrameMetadataTransformer:
         """Create a transformer to produce long tables"""
-        return cls._create_for_table_type(
-            table_type=table_type,
-            obj_schema_getter=lambda: cls.get_default_obj_schema(object_type),
-            metadata_converter_getter=lambda: LongMetadataTransformer.new(),
+        object_schema=cls.get_default_obj_schema(object_type)
+        metadata_converter=LongMetadataTransformer.new()
+        return cls(
+            metadata_converter=metadata_converter,
+            object_schema=object_schema,
         )
 
     @classmethod
     def for_wide_table(
         cls,
-        table_type: TableTypes,
         object_type: ObjectTypes,
         cell_content: TableCellContentType = TableCellContentType.COMBINED,
         metadata_schema: Optional[Mapping[str, Any]] = None,
@@ -425,44 +432,13 @@ class PandasDataFrameMetadataTransformer:
         order_columns: bool = False,
     ) -> PandasDataFrameMetadataTransformer:
         """Create a transformer to produce long tables"""
-
-        def get_metadata_transformer() -> Callable[[pd.Series[str]], pd.DataFrame]:
-            return WideMetadataTransformer.new(
-                cell_content=cell_content,
-                metadata_schema=metadata_schema,
-                sanitize_column_names=sanitize_column_names,
-                order_columns=order_columns,
-            )
-
-        return cls._create_for_table_type(
-            table_type=table_type,
-            obj_schema_getter=lambda: cls.get_default_obj_schema(object_type),
-            metadata_converter_getter=get_metadata_transformer,
+        metadata_converter = WideMetadataTransformer.new(
+            cell_content=cell_content,
+            metadata_schema=metadata_schema,
+            sanitize_column_names=sanitize_column_names,
+            order_columns=order_columns,
         )
-
-    @classmethod
-    def _create_for_table_type(
-        cls,
-        table_type: TableTypes,
-        obj_schema_getter: Callable[[], dict[str, Any]],
-        metadata_converter_getter: Callable[
-            [],
-            Callable[[pd.Series[str]], pd.DataFrame],
-        ],
-    ) -> PandasDataFrameMetadataTransformer:
-        # reason we use callables is that it is only evaluated in the relevant branch
-        match table_type:
-            case TableTypes.OBJECT:
-                metadata_converter = None
-                object_schema = obj_schema_getter()
-            case TableTypes.METADATA:
-                metadata_converter = metadata_converter_getter()
-                object_schema = {"id": "Int64"}
-            case TableTypes.COMBINED:
-                metadata_converter = metadata_converter_getter()
-                object_schema = obj_schema_getter()
-            case _:
-                raise ValueError(f"Table type {table_type} not recognized.")
+        object_schema = cls.get_default_obj_schema(object_type)
 
         return cls(
             metadata_converter=metadata_converter,

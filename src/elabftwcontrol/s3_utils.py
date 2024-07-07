@@ -14,7 +14,7 @@ except ImportError:
     S3_ENABLED = False
 
 
-from elabftwcontrol.defaults import logger
+from elabftwcontrol._logging import logger
 
 
 class ParsedS3Path(NamedTuple):
