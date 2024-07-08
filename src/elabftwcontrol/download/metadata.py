@@ -5,7 +5,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Any, Callable, NamedTuple, Optional, TypeVar, Union
 
-from elabftwcontrol.defaults import logger
+from elabftwcontrol._logging import logger
 
 T = TypeVar("T")
 V = TypeVar("V")

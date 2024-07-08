@@ -4,7 +4,7 @@ from itertools import chain
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Mapping, NamedTuple, Sequence, Union
 
-from elabftwcontrol.defaults import logger
+from elabftwcontrol._logging import logger
 from elabftwcontrol.upload.manifests import ElabObjManifests, ManifestIndex
 from elabftwcontrol.utils import read_yaml
 

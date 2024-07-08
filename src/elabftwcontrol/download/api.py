@@ -1,16 +1,24 @@
 from __future__ import annotations
 
 import json
-from enum import Enum
 from functools import cached_property
 from itertools import chain
-from typing import Any, Callable, Collection, Iterable, Iterator, NamedTuple, Optional
+from typing import (
+    Any,
+    Callable,
+    Collection,
+    Iterable,
+    Iterator,
+    NamedTuple,
+    Optional,
+    Sequence,
+)
 
 import pandas as pd
 from pydantic import BaseModel, model_validator
 
+from elabftwcontrol._logging import logger
 from elabftwcontrol.client import ElabftwApi, Experiment, Item
-from elabftwcontrol.defaults import logger
 from elabftwcontrol.download.interfaces import Category, Dictable
 from elabftwcontrol.download.metadata import MetadataParser, ParsedMetadataToPandasDtype
 from elabftwcontrol.download.output import (
@@ -28,24 +36,264 @@ from elabftwcontrol.download.transformers import (
     SplitDataFrame,
     TableCellContentType,
     TableShapes,
-    TableTypes,
 )
+from elabftwcontrol.global_config import GlobalConfig
 
 
-class MetadataColumns(str, Enum):
-    TEMPLATE = "template"
-    ALL = "all"
+def get_item_types_as_df(
+    client: Optional[ElabftwApi] = None,
+    ids: Optional[int | Sequence[int]] = None,
+) -> pd.DataFrame:
+    """Get a table representation of the item types / categories
+
+    Parameters
+    ----------
+    client
+        A custom ElabftwApi object.
+    ids
+        Limit the returned records to these ids. By default all are included.
+
+    Returns
+    -------
+    table
+        The items type data in pandas table format. Fields are mapped to columns.
+    """
+    if isinstance(ids, int):
+        ids = [ids]
+
+    client = _client_or_default(client)
+    item_types = client.items_types.iter_full(category_ids=ids)
+    return _convert_to_table(
+        objects=item_types,
+        obj_type=ObjectTypes.ITEMS_TYPE,
+        expand_metadata=False,
+    )
+
+
+def get_experiment_templates_as_df(
+    client: Optional[ElabftwApi] = None,
+    ids: Optional[int | Sequence[int]] = None,
+) -> pd.DataFrame:
+    """Get a table representation of the experiment templates
+
+    Parameters
+    ----------
+    client
+        A custom ElabftwApi object.
+    ids
+        Limit the returned records to these ids. By default all are included.
+
+    Returns
+    -------
+    table
+        The items type data in pandas table format. Fields are mapped to columns.
+    """
+    if isinstance(ids, int):
+        ids = [ids]
+
+    client = _client_or_default(client)
+    experiment_templates = client.experiments_templates.iter(ids=ids)
+    return _convert_to_table(
+        objects=experiment_templates,
+        obj_type=ObjectTypes.EXPERIMENTS_TEMPLATE,
+        expand_metadata=False,
+    )
+
+
+def get_experiments_as_df(
+    client: Optional[ElabftwApi] = None,
+    ids: Optional[int | Collection[int]] = None,
+    template_names: Optional[str | Sequence[str]] = None,
+    expand_metadata: bool = False,
+    table_shape: TableShapes = TableShapes.WIDE,
+    cell_content: TableCellContentType = TableCellContentType.VALUE,
+    sanitize_column_names: bool = False,
+) -> pd.DataFrame:
+    """Get a table representation of the experiments
+
+    Parameters
+    ----------
+    client
+        A custom ElabftwApi object.
+    ids
+        Limit the returned records to these ids. By default all are included.
+        Order may not be conserved.
+    template_names
+        Experiments derived from these templates should be included. By default
+        all experiments are included.
+    expand_metadata
+        Processes the table to expand the metadata information to columns and
+        rows. This also makes a selection of the original columns and prefixes them
+        with an underscore.
+    table_shape
+        Only relevant if `expand_metadata=True`. Options are "wide" and "long".
+        "long" stacks all metadata information into separate rows, meaning that each
+        experiment with n metadata fields is expanded to n rows. All field values stay
+        represented as strings. "wide" creates new columns for metadata information
+        and conserves one row per experiment. Data types are automatically inferred
+        from the field type.
+    cell_content
+        Only relevant if "expand_metadata=True` and `table_shape="wide"`. By default
+        only the field values are stored in the metadata field columns. This can become
+        ambiguous if the field also had units. Setting this argument to `"combined"` will
+        retain both value and unit as a string. It is also possible to select only `"unit`.
+    sanitize_column_names
+        Only relevant if "expand_metadata=True` and `table_shape="wide"`. The metadata
+        column names correspond to field names. Setting this option to `True` will
+        convert those names to a limited character set.
+
+    Returns
+    -------
+    table
+        The experiment data in pandas table format. Fields are mapped to columns.
+
+    Notes
+    -----
+    * the `template_names` parameter works by substring search. It is assumed that
+      the title of the template is still part of the experiment title. If this is
+      not the case, there is no reliable way to determine which template an experiment
+      originated from.
+    """
+    client = _client_or_default(client)
+
+    if isinstance(template_names, str):
+        template_names = [template_names]
+
+    if isinstance(ids, int):
+        ids = [ids]
+
+    experiments = IngestJob.get_experiments(
+        client,
+        ids=ids,
+        template_names=template_names,
+    )
+    return _convert_to_table(
+        objects=experiments,
+        obj_type=ObjectTypes.EXPERIMENT,
+        expand_metadata=expand_metadata,
+        table_shape=table_shape,
+        cell_content=cell_content,
+        sanitize_column_names=sanitize_column_names,
+    )
+
+
+def get_items_as_df(
+    client: Optional[ElabftwApi] = None,
+    ids: Optional[int | Collection[int]] = None,
+    category_ids: Optional[int | Sequence[int]] = None,
+    expand_metadata: bool = False,
+    table_shape: TableShapes = TableShapes.WIDE,
+    cell_content: TableCellContentType = TableCellContentType.VALUE,
+    sanitize_column_names: bool = False,
+) -> pd.DataFrame:
+    """Get a table representation of the items
+
+    Parameters
+    ----------
+    client
+        A custom ElabftwApi object.
+    ids
+        Limit the returned records to these ids. By default all are included.
+        Order may not be conserved.
+    category_ids
+        Items derived from only these categories should be included. By default
+        all items are included.
+    expand_metadata
+        Processes the table to expand the metadata information to columns and
+        rows. This also makes a selection of the original columns and prefixes them
+        with an underscore.
+    table_shape
+        Only relevant if `expand_metadata=True`. Options are "wide" and "long".
+        "long" stacks all metadata information into separate rows, meaning that each
+        item with n metadata fields is expanded to n rows. All field values stay
+        represented as strings. "wide" creates new columns for metadata information
+        and conserves one row per item. Data types are automatically inferred
+        from the field type.
+    cell_content
+        Only relevant if "expand_metadata=True` and `table_shape="wide"`. By default
+        only the field values are stored in the metadata field columns. This can become
+        ambiguous if the field also had units. Setting this argument to `"combined"` will
+        retain both value and unit as a string. It is also possible to select only `"unit`.
+    sanitize_column_names
+        Only relevant if "expand_metadata=True` and `table_shape="wide"`. The metadata
+        column names correspond to field names. Setting this option to `True` will
+        convert those names to a limited character set.
+
+    Returns
+    -------
+    table
+        The experiment data in pandas table format. Fields are mapped to columns.
+    """
+    client = _client_or_default(client)
+
+    if isinstance(category_ids, int):
+        category_ids = [category_ids]
+
+    if isinstance(ids, int):
+        ids = [ids]
+
+    items = IngestJob.get_items(
+        client,
+        ids=ids,
+        category_ids=category_ids,
+    )
+    return _convert_to_table(
+        objects=items,
+        obj_type=ObjectTypes.ITEM,
+        expand_metadata=expand_metadata,
+        table_shape=table_shape,
+        cell_content=cell_content,
+        sanitize_column_names=sanitize_column_names,
+    )
+
+
+def _client_or_default(client: Optional[ElabftwApi]) -> ElabftwApi:
+    if client is None:
+        client = GlobalConfig.get_client()
+    return client
+
+
+def _convert_to_table(
+    objects: Iterable[Dictable],
+    obj_type: ObjectTypes,
+    expand_metadata: bool = True,
+    table_shape: TableShapes = TableShapes.WIDE,
+    cell_content: TableCellContentType = TableCellContentType.VALUE,
+    sanitize_column_names: bool = False,
+) -> pd.DataFrame:
+    raw_table = PandasDataFrameTransformer()(objects)
+    if expand_metadata:
+        if table_shape == TableShapes.WIDE:
+            transformer = PandasDataFrameMetadataTransformer.for_wide_table(
+                object_type=obj_type,
+                cell_content=cell_content,
+                metadata_schema=None,
+                sanitize_column_names=sanitize_column_names,
+                order_columns=True,
+            )
+        else:
+            transformer = PandasDataFrameMetadataTransformer.for_long_table(
+                object_type=obj_type,
+            )
+
+        return transformer(raw_table)
+    else:
+        return raw_table
 
 
 class IngestConfiguration(BaseModel):
-    """Parameters for downloading items and experiment data from eLabFTW and converting to a number of formats
+    """Parameters for downloading and storing data from eLabFTW
 
     Parameters
     ----------
     object_type
-        item or experiment
+        Type of object to get from the server.
+        Options: `"item"`, `"experiment"`, `"items_type"`, `"experiments_template"`
+    ids
+        Limit the output to records with these ids. Order may not be conserved.
     format
-        Output formats. Available are json, csv, parquet, and excel.
+        Output formats. Available are `"json"`, `"csv"`, `"parquet"`, and `"excel"`.
+        In the case of `"excel"`, records are split into different sheets by category.
     output
         Path to a file where the data should be stored. Defaults to stdout. Typically a path
         to a local file. If you have the AWS dependencies installed and you select
@@ -54,42 +302,43 @@ class IngestConfiguration(BaseModel):
     categories
         The items types or templates of the items or experiments to download. By default all
         objects are downloaded. For single table formats (csv, parquet) in wide format, it is
-        recommended to select individual categories. For experiments, the template name
+        recommended to select individual categories. For experiments, the template title
         must appear in the template of the experiment.
     indent
-        Whether to indent json data that is returned. Only applies to JSON.
+        Only applied when `format="json"`. Whether to indent json data that is returned.
+    expand_metadata
+        Only relevant to tabular output formats. If `True`, the data in the metadata column
+        will be expanded to multiple columns and/or rows.
     table_shape
-        Only relevant to tabular formats. Defines whether metadata information is
-        expanded to individual columns (wide) or stacked in different rows (long).
-    table_type
-        Only relevant to tabular formats. Whether to have only object data, metadata, or both
-        in the columns of the table.
-    metadata_columns
-        Only relevant to wide tabular formats. Whether to add metadata columns of all items
-        or only those defined in the template of the category.
+        Only relevant to tabular output formats. Defines whether metadata information is
+        expanded to individual columns (wide) or stacked in rows (long).
     cell_content
         For wide tabular formats, the information that is put in columns corresponding to
-        metadata fields. This is relevant for fields that have units. By default value
-        and unit are combined into a string. If combined is selected then all metadata
-        will become strings.
+        metadata fields. By default only the field value is conserved in the columns.
+        This may be ambiguous for fields containing units. If `combined` is selected then
+        field and unit are combined as a string. It is also possible to select only the unit.
+    use_template_metadata_schema
+        Only relevant to wide tabular formats. If true, the metadata columns are forced
+        correspond to the fields of the item category or experiment template.
     sanitize_column_names
-        Only relevant to tabular formats. Whether to keep the field names as column names or
-        sanitize them to a simple character set that is compliant with column name rules in
-        AWS Glue tables.
+        Only relevant to wide tabular formats. Whether to keep the field names as column
+        names or sanitize them to a simple character set that is compliant with column name
+        rules in AWS Glue tables.
     glue_table
         Only relevant to tabular formats. If you write data directly to S3 you can register
-        the table as a glue table. Input must be in the format: <glue db>:<glue table>.
+        the table as a glue table. Input must be in the format: `<glue db>:<glue table>`.
     """
 
     object_type: ObjectTypes = ObjectTypes.ITEM
+    ids: list[int] = []
     format: OutputFormats = OutputFormats.JSON
     output: Optional[str] = None
-    categories: Optional[list[str]] = None
+    categories: list[str] = []
     indent: bool = False
+    expand_metadata: bool = False
     table_shape: TableShapes = TableShapes.WIDE
-    table_type: TableTypes = TableTypes.COMBINED
-    metadata_columns: MetadataColumns = MetadataColumns.TEMPLATE
-    cell_content: TableCellContentType = TableCellContentType.COMBINED
+    use_template_metadata_schema: bool = False
+    cell_content: TableCellContentType = TableCellContentType.VALUE
     sanitize_column_names: bool = False
     glue_table: Optional[str] = None
 
@@ -103,8 +352,8 @@ class IngestConfiguration(BaseModel):
             self.format in (OutputFormats.PARQUET, OutputFormats.CSV)
             and self.table_shape == TableShapes.WIDE
             and (not self.categories or len(self.categories) != 1)
-            and self.metadata_columns == MetadataColumns.TEMPLATE
-            and self.table_type != TableTypes.OBJECT
+            and self.expand_metadata
+            and self.use_template_metadata_schema
         ):
             raise ValueError(
                 "A single wide table format with metadata must specify one category"
@@ -145,7 +394,11 @@ class IngestJob:
         config: IngestConfiguration,
     ) -> None:
         category_info = CategoryInfo(getter=api.experiments_templates.iter)
-        experiments = cls.get_experiments(api)
+        experiments = cls.get_experiments(
+            api,
+            ids=config.ids,
+            template_names=config.categories,
+        )
 
         cls.transform_and_save_objects(
             objects=experiments,
@@ -168,14 +421,16 @@ class IngestJob:
         category_info = CategoryInfo(getter=throw_error)
 
         if config.categories:
-            templates_info = CategoryInfo(getter=api.experiments_templates.iter)
+            templates_info = CategoryInfo(
+                getter=lambda: api.experiments_templates.iter(ids=config.ids),
+            )
             template_ids = templates_info.get_ids(categories=config.categories)
             templates = [
                 templates_info.categories_map[template_id]
                 for template_id in template_ids
             ]
         else:
-            templates = list(api.experiments_templates.iter())
+            templates = list(api.experiments_templates.iter(ids=config.ids))
 
         cls.transform_and_save_objects(
             objects=templates,
@@ -197,7 +452,12 @@ class IngestJob:
             )
             logger.debug("Item types categories specified: %s" % config.categories)
             logger.debug("Item types ids included: %s" % included_item_ids)
-        items = cls.get_items(api, included_item_ids)
+
+        items = cls.get_items(
+            api,
+            ids=config.ids,
+            category_ids=included_item_ids,
+        )
 
         category_info = CategoryInfo(api.items_types.iter_full)
         cls.transform_and_save_objects(
@@ -220,7 +480,7 @@ class IngestJob:
 
         category_info = CategoryInfo(getter=throw_error)
 
-        items_types_info = CategoryInfo(api.items_types.iter)
+        items_types_info = CategoryInfo(lambda: api.items_types.iter(ids=config.ids))
         category_ids = items_types_info.get_ids(config.categories)
         item_types = api.items_types.iter_full(category_ids)
 
@@ -266,17 +526,34 @@ class IngestJob:
     def get_items(
         cls,
         api: ElabftwApi,
-        category_ids: Optional[Iterable[int]],
+        ids: Optional[Collection[int]] = None,
+        category_ids: Optional[Iterable[int]] = None,
     ) -> Iterator[Item]:
         """Iterates over categories and yields iterators over the items in those categories"""
         if category_ids is None:
-            return api.items.iter()
+            return api.items.iter(ids=ids)
         else:
-            return chain(*(api.items.iter(cat=cat_id) for cat_id in category_ids))
+            return chain(
+                *(api.items.iter(ids=ids, cat=cat_id) for cat_id in category_ids)
+            )
 
     @classmethod
-    def get_experiments(cls, api: ElabftwApi) -> Iterator[Experiment]:
-        return api.experiments.iter()
+    def get_experiments(
+        cls,
+        api: ElabftwApi,
+        ids: Optional[Collection[int]] = None,
+        template_names: Optional[Sequence[str]] = None,
+    ) -> Iterator[Experiment]:
+        experiments = api.experiments.iter(ids=ids)
+        if not template_names:
+            for experiment in experiments:
+                yield experiment
+        else:
+            for experiment in experiments:
+                for template_name in template_names:
+                    if template_name in experiment.title:
+                        yield experiment
+                        break
 
 
 class JSONConverter(NamedTuple):
@@ -322,11 +599,13 @@ class SinglePandasTableConverter(NamedTuple):
         objects: Iterable[Dictable],
     ) -> pd.DataFrame:
         raw_table = PandasDataFrameTransformer()(objects)
+        if not self.config.expand_metadata:
+            return raw_table
+
         if self.config.table_shape == TableShapes.WIDE:
             logger.info("Deriving metadata schema for wide format")
             metadata_schema = self.get_category_metadata_schema()
             transformer = PandasDataFrameMetadataTransformer.for_wide_table(
-                table_type=self.config.table_type,
                 object_type=self.config.object_type,
                 cell_content=self.config.cell_content,
                 metadata_schema=metadata_schema,
@@ -335,7 +614,6 @@ class SinglePandasTableConverter(NamedTuple):
             )
         else:
             transformer = PandasDataFrameMetadataTransformer.for_long_table(
-                table_type=self.config.table_type,
                 object_type=self.config.object_type,
             )
         return transformer(raw_table)
@@ -353,13 +631,7 @@ class SinglePandasTableConverter(NamedTuple):
     def get_category_metadata_schema(
         self,
     ) -> Optional[dict[str, str]]:
-        if self.config.table_type == TableTypes.OBJECT:
-            logger.debug("No metadata schema required since we don't require metadata.")
-            return None
-        if self.config.metadata_columns == MetadataColumns.ALL:
-            logger.debug("No metadata schema required since we want all columns.")
-            return None
-        elif self.config.metadata_columns == MetadataColumns.TEMPLATE:
+        if self.config.use_template_metadata_schema:
             category_ids = self.category_info.get_ids(self.config.categories)
             logger.debug("We need category metadata based on ids: %s" % category_ids)
             if len(category_ids) == 1:
@@ -374,9 +646,8 @@ class SinglePandasTableConverter(NamedTuple):
                     "Can not derive a single metadata schema with no or multiple template ids provided."
                 )
         else:
-            raise ValueError(
-                f"Unrecognized option for metadata columns: '{self.config.metadata_columns}'"
-            )
+            logger.debug("No metadata schema required since we want all columns.")
+            return None
 
 
 class ExcelConverter(NamedTuple):
@@ -395,22 +666,26 @@ class ExcelConverter(NamedTuple):
         objects: Iterable[Dictable],
     ) -> Iterator[SplitDataFrame]:
         raw_table = PandasDataFrameTransformer()(objects)
-        if self.config.table_shape == TableShapes.WIDE:
-            categories_metadata_schema = self.get_categories_metadata_schemas()
-            multi_tables = MultiPandasDataFrameTransformer.for_wide_tables(
-                table_type=self.config.table_type,
-                object_type=self.config.object_type,
-                categories_metadata_schema=categories_metadata_schema,
-                cell_content=self.config.cell_content,
-                sanitize_column_names=self.config.sanitize_column_names,
-                order_columns=True,
-            )
-        else:
-            multi_tables = MultiPandasDataFrameTransformer.for_long_tables(
-                table_type=self.config.table_type,
+        if not self.config.expand_metadata:
+            multi_tables = MultiPandasDataFrameTransformer.for_raw_tables(
                 object_type=self.config.object_type,
                 categories=self.config.categories,
             )
+        else:
+            if self.config.table_shape == TableShapes.WIDE:
+                categories_metadata_schema = self.get_categories_metadata_schemas()
+                multi_tables = MultiPandasDataFrameTransformer.for_wide_tables(
+                    object_type=self.config.object_type,
+                    categories_metadata_schema=categories_metadata_schema,
+                    cell_content=self.config.cell_content,
+                    sanitize_column_names=self.config.sanitize_column_names,
+                    order_columns=True,
+                )
+            else:
+                multi_tables = MultiPandasDataFrameTransformer.for_long_tables(
+                    object_type=self.config.object_type,
+                    categories=self.config.categories,
+                )
         return multi_tables(raw_table)
 
     def save(
@@ -423,16 +698,7 @@ class ExcelConverter(NamedTuple):
     def get_categories_metadata_schemas(
         self,
     ) -> Optional[dict[str, Optional[dict[str, str]]]]:
-        if self.config.table_type == TableTypes.OBJECT:
-            logger.debug("No metadata schema required since we don't require metadata.")
-            return None
-        if self.config.metadata_columns == MetadataColumns.ALL:
-            logger.debug("No metadata schema required since we want all metadata.")
-            if self.config.categories:
-                return {category: None for category in self.config.categories}
-            else:
-                return None
-        elif self.config.metadata_columns == MetadataColumns.TEMPLATE:
+        if self.config.use_template_metadata_schema:
             logger.debug("We only want template metadata columns, not all.")
             category_ids = self.category_info.get_ids(self.config.categories)
             return self.category_info.get_metadata_schemas_by_name(
@@ -440,9 +706,11 @@ class ExcelConverter(NamedTuple):
                 category_ids=category_ids,
             )
         else:
-            raise ValueError(
-                f"Unrecognized option for metadata columns: '{self.config.metadata_columns}'"
-            )
+            logger.debug("No metadata schema required since we want all metadata.")
+            if self.config.categories:
+                return {category: None for category in self.config.categories}
+            else:
+                return None
 
 
 class CategoryInfo:

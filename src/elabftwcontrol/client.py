@@ -6,12 +6,14 @@ from pathlib import Path
 from typing import (
     Any,
     Callable,
+    Collection,
     Dict,
     Generic,
     Iterable,
     Iterator,
     List,
     Optional,
+    Sequence,
     Type,
     TypeVar,
     Union,
@@ -23,6 +25,7 @@ from elabapi_python import (
     ExperimentsApi,
     ExperimentsTemplatesApi,
     ExperimentTemplate,
+    InfoApi,
     Item,
     ItemsApi,
     ItemsType,
@@ -35,8 +38,9 @@ from elabapi_python import (
 )
 from elabapi_python.rest import ApiException
 
+from elabftwcontrol._logging import logger
 from elabftwcontrol.configure import AccessConfig, MultiConfig
-from elabftwcontrol.defaults import DEFAULT_CONFIG_FILE, logger
+from elabftwcontrol.defaults import DEFAULT_CONFIG_FILE
 from elabftwcontrol.types import (
     ApiResponseObject,
     ElabObj,
@@ -206,6 +210,14 @@ class ElabftwApi:
         self.client = client
         self.request_batch_size = request_batch_size
 
+    @property
+    def host_name(self) -> str:
+        return self.client.configuration.host
+
+    @cached_property
+    def info(self) -> InfoApi:
+        return InfoApi(self.client)
+
     @cached_property
     def items(self) -> ItemCRUD:
         return ItemCRUD.from_client(self.client)
@@ -333,8 +345,13 @@ class ItemsTypeCRUD(EntityRUD, GroupEntityCreate):
     def read(self, id: int) -> ItemsType:
         return self.api.get_items_type(id)
 
-    def iter(self) -> List[ItemsType]:
-        return self.api.read_items_types()
+    def iter(self, ids: Optional[Sequence[int]] = None) -> List[ItemsType]:
+        # it is much more efficient to make one request than one per id
+        all_types = self.api.read_items_types()
+        if not ids:
+            return all_types
+        item_type_map = {item_type.id: item_type for item_type in all_types}
+        return [item_type_map[id] for id in ids]
 
     def iter_full(
         self,
@@ -400,8 +417,13 @@ class ExperimentTemplateCRUD(EntityRUD, GroupEntityCreate):
     def read(self, id: int) -> ExperimentTemplate:
         return self.api.get_experiment_template(id)
 
-    def iter(self) -> List[ExperimentTemplate]:
-        return self.api.read_experiments_templates()
+    def iter(self, ids: Optional[Sequence[int]] = None) -> List[ExperimentTemplate]:
+        # it is much more efficient to make one request than one per id
+        all_templates = self.api.read_experiments_templates()
+        if not ids:
+            return all_templates
+        template_map = {template.id: template for template in all_templates}
+        return [template_map[id] for id in ids]
 
     def patch(self, id: int, body: Dict[str, Any]) -> None:
         self.api.patch_experiment_template(id, body=body)
@@ -451,6 +473,7 @@ class ItemCRUD(EntityRUD, SingleEntityCreate):
 
     def iter(
         self,
+        ids: Optional[Collection[int]] = None,
         **kwargs: Any,
     ) -> Iterator[Item]:
         """Return items by making batched requests"""
@@ -466,6 +489,9 @@ class ItemCRUD(EntityRUD, SingleEntityCreate):
                 break
 
             for item in items:
+                if ids and item.id not in ids:
+                    continue
+
                 yield item
 
             if len(items) < self.read_batch_size:
@@ -522,6 +548,7 @@ class ExperimentCRUD(EntityRUD, SingleEntityCreate):
 
     def iter(
         self,
+        ids: Optional[Collection[int]] = None,
         **kwargs: Any,
     ) -> Iterator[Experiment]:
         """Return items by making batched requests"""
@@ -537,6 +564,9 @@ class ExperimentCRUD(EntityRUD, SingleEntityCreate):
                 break
 
             for experiment in experiments:
+                if ids and experiment.id not in ids:
+                    continue
+
                 yield experiment
 
             if len(experiments) < self.read_batch_size:
