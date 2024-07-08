@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "elabftwcontrol"
-version = "0.0.5"
+version = "0.0.6"
 license = "MIT"
 description = "Package for easily interacting with eLabFTW data from the cli and in Python"
 authors = [
