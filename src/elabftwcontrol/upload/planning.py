@@ -3,8 +3,8 @@ from __future__ import annotations
 from collections import OrderedDict
 from typing import Dict, Iterable, List, Literal, NamedTuple, Sequence
 
-from elabftwcontrol.client import ObjectSyncer
 from elabftwcontrol._logging import logger
+from elabftwcontrol.client import ObjectSyncer
 from elabftwcontrol.graph import DependencyGraph
 from elabftwcontrol.manifests import Node, ObjectManifest, StateDefinition
 from elabftwcontrol.parsers import ParsedProject

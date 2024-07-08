@@ -415,8 +415,8 @@ class PandasDataFrameMetadataTransformer:
         object_type: ObjectTypes,
     ) -> PandasDataFrameMetadataTransformer:
         """Create a transformer to produce long tables"""
-        object_schema=cls.get_default_obj_schema(object_type)
-        metadata_converter=LongMetadataTransformer.new()
+        object_schema = cls.get_default_obj_schema(object_type)
+        metadata_converter = LongMetadataTransformer.new()
         return cls(
             metadata_converter=metadata_converter,
             object_schema=object_schema,

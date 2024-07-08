@@ -7,13 +7,13 @@ from typing import Optional
 import typer
 from typing_extensions import Annotated
 
+from elabftwcontrol._logging import logger
 from elabftwcontrol.client import ElabftwApi
 from elabftwcontrol.configure import (
     create_or_append_configuration_file,
     delete_configuration_file,
     list_config_profiles,
 )
-from elabftwcontrol._logging import logger
 from elabftwcontrol.defaults import DEFAULT_CONFIG_FILE
 from elabftwcontrol.download import (
     IngestConfiguration,
