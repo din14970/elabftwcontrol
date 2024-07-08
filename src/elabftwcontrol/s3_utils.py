@@ -29,7 +29,7 @@ class ParsedS3Path(NamedTuple):
         stripped_path = path[5:]
         split_path = stripped_path.split("/")
         bucket = split_path[0]
-        prefix = "".join(split_path[1:])
+        prefix = "/".join(split_path[1:])
         return cls(
             bucket=bucket,
             prefix=prefix,

@@ -272,8 +272,11 @@ class ElabftwApi:
                 "API key must be specified or defined in the ELABCTL_API_KEY environment variable."
             )
 
-        verify_ssl = verify_ssl or bool(int(os.getenv("ELABCTL_VERIFY_SSL", "1")))
-        debug = debug or bool(int(os.getenv("ELABCTL_DEBUG", "0")))
+        if verify_ssl is None:
+            verify_ssl = bool(int(os.getenv("ELABCTL_VERIFY_SSL", "1")))
+
+        if debug is None:
+            debug = bool(int(os.getenv("ELABCTL_DEBUG", "0")))
 
         configuration = AccessConfig(
             host_url=host_url,
