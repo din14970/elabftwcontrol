@@ -16,32 +16,43 @@
         # see https://github.com/nix-community/poetry2nix/tree/master#api for more functions and examples.
         pkgs = nixpkgs.legacyPackages.${system};
         inherit (poetry2nix.lib.mkPoetry2Nix { inherit pkgs; }) mkPoetryApplication;
+        inherit (poetry2nix.lib.mkPoetry2Nix { inherit pkgs; }) mkPoetryEnv;
       in
       {
         packages = {
           myapp = mkPoetryApplication {
             projectDir = ./.;
-            checkGroups = [ "dev" "test" "lsp" ];
             preferWheels = true;
-            # overrides = poetry2nix.overrides.withDefaults (final: prev: {
-            #   pyarrow = prev.pyarrow.override {
-            #     preferWheel = true;
-            #   };
-            # });
           };
+          checkGroups = [ "dev" "test" "lsp" ];
           default = self.packages.${system}.myapp;
         };
-
-        #defaultPackage = self.packages.${system}.myapp;
 
         # Shell for app dependencies.
         #
         #     nix develop
         #
         # Use this shell for developing your app.
+
         devShells.default = pkgs.mkShell {
-          inputsFrom = [ self.packages.${system}.myapp ];
+          inputsFrom = [ self.devShells.${system}.pythonEnv.env ];
+          #inputsFrom = [ self.packages.${system}.default ];
         };
+
+        devShells.pythonEnv = mkPoetryEnv {
+          projectDir = ./.;
+          checkGroups = [ "dev" "test" "lsp" ];
+          editablePackageSources = {
+            my-app = ./src;
+          };
+          preferWheels = true;
+          # overrides = poetry2nix.overrides.withDefaults (final: prev: {
+          #   pyarrow = prev.pyarrow.override {
+          #     preferWheel = true;
+          #   };
+          # });
+        };
+
 
         # Shell for poetry.
         #
