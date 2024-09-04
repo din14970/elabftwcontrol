@@ -24,9 +24,6 @@
             projectDir = ./.;
             checkGroups = [ "dev" "test" "lsp" ];
             preferWheels = true;
-            # editablePackageSources = {
-            #   myapp = ./src;
-            # };
           };
           default = self.packages.${system}.elabftwcontrol;
         };
@@ -39,21 +36,18 @@
 
         devShells.default = pkgs.mkShell {
           inputsFrom = [ self.devShells.${system}.pythonEnv.env ];
-          #inputsFrom = [ self.packages.${system}.default ];
+
+          shellHook = ''
+            SOURCE_PATH=$PWD/src
+            echo "Source path: $SOURCE_PATH"
+            export PYTHONPATH=$SOURCE_PATH:$PYTHONPATH
+          '';
         };
 
         devShells.pythonEnv = mkPoetryEnv {
           projectDir = ./.;
           checkGroups = [ "dev" "test" "lsp" ];
-          editablePackageSources = {
-            elabftwcontrol = "${builtins.getEnv "PWD"}/src";
-          };
           preferWheels = true;
-          # overrides = poetry2nix.overrides.withDefaults (final: prev: {
-          #   pyarrow = prev.pyarrow.override {
-          #     preferWheel = true;
-          #   };
-          # });
         };
 
 
