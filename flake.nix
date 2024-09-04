@@ -20,12 +20,15 @@
       in
       {
         packages = {
-          myapp = mkPoetryApplication {
+          elabftwcontrol = mkPoetryApplication {
             projectDir = ./.;
+            checkGroups = [ "dev" "test" "lsp" ];
             preferWheels = true;
+            # editablePackageSources = {
+            #   myapp = ./src;
+            # };
           };
-          checkGroups = [ "dev" "test" "lsp" ];
-          default = self.packages.${system}.myapp;
+          default = self.packages.${system}.elabftwcontrol;
         };
 
         # Shell for app dependencies.
@@ -43,7 +46,7 @@
           projectDir = ./.;
           checkGroups = [ "dev" "test" "lsp" ];
           editablePackageSources = {
-            my-app = ./src;
+            elabftwcontrol = "${builtins.getEnv "PWD"}/src";
           };
           preferWheels = true;
           # overrides = poetry2nix.overrides.withDefaults (final: prev: {
