@@ -62,7 +62,7 @@ def sanitize_column_names(df: pd.DataFrame) -> pd.DataFrame:
     """Replace whitespace with underscore and put everything in lowercase"""
 
     def sanitize(col: str) -> str:
-        return re.sub("\s+", "_", col.lower().strip())
+        return re.sub(r"\s+", "_", col.lower().strip())
 
     return df.rename(columns=sanitize)
 
