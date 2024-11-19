@@ -10,7 +10,7 @@ on:
 
 jobs:
   build-and-test:
-    name: ${{ matrix.os }}/py${{ matrix.python-version }}/poetry
+    name: ${{ matrix.os }}/py${{ matrix.python-version }}/uv
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
     strategy:
@@ -21,43 +21,24 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+          version: "0.5.2"
+
       - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v5
-        id: setup-python
-        with:
-          python-version: ${{ matrix.python-version }}
+        run: uv python install ${{ matrix.python-version }}
 
-      - name: Install and configure Poetry
-        uses: snok/install-poetry@v1
-        with:
-          version: 1.8.3
-          virtualenvs-create: true
-          virtualenvs-in-project: true
-          installer-parallel: true
-
-      - name: Load cached venv
-        id: cached-poetry-dependencies
-        uses: actions/cache@v3
-        with:
-          path: .venv
-          key: venv-${{ matrix.os }}-${{ steps.setup-python.outputs.python-version }}-${{ hashFiles('**/poetry.lock') }}
-
-      - name: Install dependencies
-        if: steps.cached-poetry-dependencies.outputs.cache-hit != 'true'
-        run: poetry install --no-interaction --no-root --with dev,test
-
-      - name: Install project
-        run: poetry install --no-interaction
+      - name: Install the project and dependencies
+        run: uv sync --all-extras --group test
 
       - name: Run tests
-        run: |
-          source .venv/bin/activate
-          pytest --cov=src tests/
+        run: uv run pytest --cov=src tests/
 
       - name: Generate line coverage
-        run: |
-          source .venv/bin/activate
-          coverage report --show-missing
+        run: uv run coverage report --show-missing
 
       - name: Upload coverage to Coveralls
         uses: AndreMiras/coveralls-python-action@develop
