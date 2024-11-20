@@ -16,7 +16,7 @@ classifiers = [
   "Programming Language :: Python :: 3.12",
 ]
 dependencies = [
-  "elabapi-python ~= 0.4",
+  "elabapi-python ~= 5.0",
   "pydantic ~= 2.4",
   "pandas ~= 2.0",
   "typer ~= 0.9",

@@ -7,6 +7,9 @@ build:
 
 check: format lint test
 
+sync:
+	uv sync --group dev --group lint --group format --group test --group lsp --all-extras
+
 format:
 	uv run ruff format src
 	uv run ruff format tests

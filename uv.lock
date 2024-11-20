@@ -481,7 +481,7 @@ wheels = [
 
 [[package]]
 name = "elabapi-python"
-version = "0.5.1"
+version = "5.1.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "certifi" },
@@ -489,14 +489,14 @@ dependencies = [
     { name = "six" },
     { name = "urllib3" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/5e/de/a2524ad5e14a42756b27ae21767eba089fc3029d2a6748922d5414631ee4/elabapi-python-0.5.1.tar.gz", hash = "sha256:c3d7c914b834e419e995ab5467ccc7623f244cbf73a2a12d89457c82bdb8c136", size = 82793 }
+sdist = { url = "https://files.pythonhosted.org/packages/05/bd/5e6fe43e7d80d9d4009631e6dcc9c7d0cd4117515ea664c3c7bfcdaef7f7/elabapi_python-5.1.0.tar.gz", hash = "sha256:a6887c01e28f27fa580a6fa961f27dc7465f550c22f6daed2debb5363b000403", size = 94689 }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/7a/d7/771e6f79d9a9285b937d2b36ba8f27159785d17af71098d7240ffde5bb02/elabapi_python-0.5.1-py3-none-any.whl", hash = "sha256:8ba3bd352abc5a1ceba758bfe304a3635055c5fd64f2734e8e74556fd3b53acb", size = 258646 },
+    { url = "https://files.pythonhosted.org/packages/b2/06/2b2858be9910df037738e5d732a670647c9e96884ccc0abd4d9138d30102/elabapi_python-5.1.0-py3-none-any.whl", hash = "sha256:34ccf750548dda27c4b8c4c0a3647e053226bde7a262e0ca05ddcd2114e70d85", size = 292955 },
 ]
 
 [[package]]
 name = "elabftwcontrol"
-version = "0.0.0"
+version = "0.1.3.dev0+g818e1f5.d20241120"
 source = { editable = "." }
 dependencies = [
     { name = "elabapi-python" },
@@ -550,7 +550,7 @@ test = [
 [package.metadata]
 requires-dist = [
     { name = "awswrangler", marker = "extra == 'aws'", specifier = "~=3.7" },
-    { name = "elabapi-python", specifier = "~=0.4" },
+    { name = "elabapi-python", specifier = "~=5.0" },
     { name = "openpyxl", marker = "extra == 'excel'", specifier = "~=3.1" },
     { name = "pandas", specifier = "~=2.0" },
     { name = "pydantic", specifier = "~=2.4" },
