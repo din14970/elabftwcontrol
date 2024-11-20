@@ -33,54 +33,10 @@ jobs:
         path: dist/
 
 
-  testpypi-publish:
-    name: Upload release to TestPyPI
-    needs:
-    - build
-    runs-on: ubuntu-latest
-
-    environment:
-      name: testpypi
-      url: https://test.pypi.org/p/elabftwcontrol
-
-    permissions:
-      id-token: write
-
-    steps:
-    - name: Download all the dists
-      uses: actions/download-artifact@v4
-      with:
-        name: python-package-distributions
-        path: dist/
-
-    - name: Publish distribution to TestPyPI
-      uses: pypa/gh-action-pypi-publish@release/v1
-      with:
-        repository-url: "https://test.pypi.org/legacy/"
-
-
-  test-published-package:
-    name: Install from TestPypi
-    needs:
-    - testpypi-publish
-    runs-on: ubuntu-latest
-
-    steps:
-    - name: Set up Python
-      uses: actions/setup-python@v5
-      with:
-        python-version: '3.10'
-
-    - name: Install elabftwcontrol
-      run: |
-        pip install -i https://test.pypi.org/simple/ --extra-index-url https://pypi.org/simple/ elabftwcontrol==${{ github.ref_name }}
-        elabftwcontrol -h
-
-
   publish-to-pypi:
     name: Publish Python distribution to PyPI
     needs:
-    - test-published-package
+    - build
     runs-on: ubuntu-latest
     environment:
       name: pypi
