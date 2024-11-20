@@ -2,8 +2,8 @@ name: Upload Python Package
 
 on:
   push:
-    branches:
-      - master
+    tags:
+      - '*.*.*'
 
 jobs:
   build:
@@ -35,7 +35,6 @@ jobs:
 
   testpypi-publish:
     name: Upload release to TestPyPI
-    if: startsWith(github.ref, 'refs/tags/')  # only publish to PyPI on tag pushes
     needs:
     - build
     runs-on: ubuntu-latest
@@ -74,15 +73,13 @@ jobs:
 
     - name: Install elabftwcontrol
       run: |
-        pip install -i https://test.pypi.org/simple/ elabftwcontrol
+        pip install -i https://test.pypi.org/simple/ elabftwcontrol==${{ github.ref_name }}
         elabftwcontrol -h
 
 
   publish-to-pypi:
     name: Publish Python distribution to PyPI
-    if: startsWith(github.ref, 'refs/tags/')  # only publish to PyPI on tag pushes
     needs:
-    - build
     - test-published-package
     runs-on: ubuntu-latest
     environment:
