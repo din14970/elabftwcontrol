@@ -5,7 +5,7 @@ import pytest
 import yaml
 from pydantic import ValidationError
 
-from elabftwcontrol.upload.manifests import (
+from elabftwcontrol.core.manifests import (
     BaseMetaField,
     DependencyGraph,
     ElabObjManifests,

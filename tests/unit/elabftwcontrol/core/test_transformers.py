@@ -3,8 +3,8 @@ from typing import Any, Callable, Sequence, TypeVar
 import pandas as pd
 import pytest
 
-from elabftwcontrol.download.metadata import MetadataField
-from elabftwcontrol.download.transformers import (
+from elabftwcontrol.core.metadata import MetadataField
+from elabftwcontrol.core.transformers import (
     CSVElabDataTableTransformer,
     CSVLongMetadataTableTransformer,
     ExcelTransformer,

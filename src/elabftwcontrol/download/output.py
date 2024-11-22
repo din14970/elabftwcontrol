@@ -5,16 +5,11 @@ import io
 import sys
 from enum import Enum
 from pathlib import Path
-from typing import Any, Callable, Iterable, Optional, Sequence
+from typing import Any, Callable, Iterable, Optional, Protocol, Sequence
 
 import pandas as pd
 
-from elabftwcontrol.download.interfaces import (
-    CSVWriterInterface,
-    LineWriterInterface,
-    Pathlike,
-)
-from elabftwcontrol.download.transformers import SplitDataFrame
+from elabftwcontrol.core.interfaces import Pathlike
 from elabftwcontrol.s3_utils import ParsedS3Path, write_lines_s3
 from elabftwcontrol.utils import number_to_base
 
@@ -26,54 +21,66 @@ class OutputFormats(str, Enum):
     PARQUET = "parquet"
 
 
+class _LineWriterInterface(Protocol):
+    def __call__(self, lines: Iterable[str]) -> None: ...
+
+
 class LineWriter:
-    def __init__(self, line_writer: LineWriterInterface) -> None:
+    """Callable class for writing lines to a text file.
+
+    Instantiate using the `new` class method and pass a path.
+    If no path is passed, the output will be directed to stdout.
+    A path that is prefixed with s3:// will be written to AWS S3 if the
+    extra `aws` dependencies are installed.
+    """
+
+    def __init__(self, line_writer: _LineWriterInterface) -> None:
         self.line_writer = line_writer
 
+    def __call__(self, lines: Iterable[str]) -> None:
+        self.line_writer(lines)
+
     @classmethod
-    def from_output(cls, output: Optional[str]) -> LineWriter:
-        writer = cls._select_writer_based_on_output(output)
+    def new(cls, path: Optional[str] = None) -> LineWriter:
+        writer = cls._select_writer_based_on_output(path)
         return cls(line_writer=writer)
 
     @classmethod
     def _select_writer_based_on_output(
         cls,
-        output: Optional[str],
-    ) -> LineWriterInterface:
-        writer: LineWriterInterface
-        if output is None:
-            writer = StdOutWriter()
-        elif output.startswith("s3://"):
-            writer = S3TextWriter.from_path(output)
+        path: Optional[str],
+    ) -> _LineWriterInterface:
+        writer: _LineWriterInterface
+        if path is None:
+            writer = _StdOutWriter()
+        elif str(path).startswith("s3://"):
+            writer = _S3TextWriter.new(path)
         else:
-            writer = TextFileWriter(output)
+            writer = _TextFileWriter(path)
         return writer
 
-    def __call__(self, lines: Iterable[str]) -> None:
-        self.line_writer(lines)
 
-
-class StdOutWriter:
+class _StdOutWriter:
     def __call__(self, lines: Iterable[str]) -> None:
         for line in lines:
             print(line)
 
 
-class TextFileWriter:
+class _TextFileWriter:
     def __init__(
         self,
-        output: Pathlike,
+        path: Pathlike,
     ) -> None:
-        self.output = output
+        self.path = path
 
     def __call__(self, lines: Iterable[str]) -> None:
-        with open(self.output, "w") as f:
+        with open(self.path, "w") as f:
             for line in lines:
                 f.write(line)
                 f.write("\n")
 
 
-class S3TextWriter:
+class _S3TextWriter:
     def __init__(
         self,
         bucket: str,
@@ -83,7 +90,7 @@ class S3TextWriter:
         self.prefix = prefix
 
     @classmethod
-    def from_path(cls, path: str) -> S3TextWriter:
+    def new(cls, path: str) -> _S3TextWriter:
         parsed_path = ParsedS3Path.from_path(path)
         return cls(
             bucket=parsed_path.bucket,
@@ -98,22 +105,40 @@ class S3TextWriter:
         )
 
 
+class _CSVWriterInterface(Protocol):
+    def __call__(self, rows: Iterable[dict[str, Any]]) -> None: ...
+
+
 class CSVWriter:
+    """Callable class for rows to a CSV file.
+
+    Instantiate using the `new` class method and pass a path and column names.
+    If no path is passed, the output will be directed to stdout.
+    A path that is prefixed with s3:// will be written to AWS S3 if the
+    extra `aws` dependencies are installed.
+
+    Row data is passed as dictionaries, with the keys being the column
+    names and the values being the values in the row.
+    """
+
     def __init__(
         self,
         header: Sequence[str],
-        writer: CSVWriterInterface,
+        writer: _CSVWriterInterface,
     ) -> None:
         self.header = header
         self.writer = writer
 
+    def __call__(self, rows: Iterable[dict[str, Any]]) -> None:
+        self.writer(rows)
+
     @classmethod
-    def from_output(
+    def new(
         cls,
-        output: Optional[str],
         header: Sequence[str],
+        path: Optional[Pathlike] = None,
     ) -> CSVWriter:
-        writer = cls._select_writer_based_on_output(output, header=header)
+        writer = cls._select_writer_based_on_output(path, header=header)
         return cls(
             header=header,
             writer=writer,
@@ -122,20 +147,17 @@ class CSVWriter:
     @classmethod
     def _select_writer_based_on_output(
         cls,
-        output: Optional[str],
+        path: Optional[Pathlike],
         header: Sequence[str],
-    ) -> CSVWriterInterface:
-        writer: CSVWriterInterface
-        if output is None:
-            writer = CSVToStdOutWriter(header=header)
-        elif output.startswith("s3://"):
+    ) -> _CSVWriterInterface:
+        writer: _CSVWriterInterface
+        if path is None:
+            writer = _CSVToStdOutWriter(header=header)
+        elif str(path).startswith("s3://"):
             raise NotImplementedError("Currently can't store CSVs directly on S3.")
         else:
-            writer = CSVToFileWriter(path=output, header=header)
+            writer = _CSVToFileWriter(path=path, header=header)
         return writer
-
-    def __call__(self, rows: Iterable[dict[str, Any]]) -> None:
-        self.writer(rows)
 
     @classmethod
     def write_rows(
@@ -155,7 +177,7 @@ class CSVWriter:
             writer.writerow(row)
 
 
-class CSVToStdOutWriter:
+class _CSVToStdOutWriter:
     def __init__(
         self,
         header: Sequence[str],
@@ -173,7 +195,7 @@ class CSVToStdOutWriter:
         )
 
 
-class CSVToFileWriter:
+class _CSVToFileWriter:
     def __init__(
         self,
         path: Pathlike,
@@ -198,6 +220,8 @@ PandasOutputFormats = OutputFormats
 
 
 class PandasWriter:
+    """Write a pandas dataframe to a CSV or Parquet file"""
+
     def __init__(self, writer: Callable[[pd.DataFrame], None]) -> None:
         self.writer = writer
 
@@ -207,45 +231,45 @@ class PandasWriter:
     @classmethod
     def new(
         cls,
-        path: Optional[Pathlike],
-        format: PandasOutputFormats,
+        path: Optional[Pathlike] = None,
+        format: PandasOutputFormats = PandasOutputFormats.CSV,
         glue_info: Optional[str] = None,
     ) -> PandasWriter:
         writer: Callable[[pd.DataFrame], None]
         if path is None:
-            writer = PandasToStdOutWriter(format)
+            writer = _PandasToStdOutWriter(format)
         elif str(path).startswith("s3://"):
-            writer = PandasToS3Writer.new(
+            writer = _PandasToS3Writer.new(
                 path=str(path),
                 format=format,
                 glue_info=glue_info,
             )
         else:
-            writer = PandasToFileWriter(path, format)
+            writer = _PandasToFileWriter(path, format)
         return cls(writer=writer)
 
     @classmethod
     def write(
         cls,
         data: pd.DataFrame,
-        output: Pathlike | io.BytesIO,
+        path: Pathlike | io.BytesIO,
         format: PandasOutputFormats,
     ) -> None:
         if format == OutputFormats.CSV:
             data.to_csv(
-                output,
+                path,
                 quoting=csv.QUOTE_NONNUMERIC,
                 header=True,
                 index=False,
                 escapechar="\\",
             )
         elif format == OutputFormats.PARQUET:
-            data.to_parquet(path=output)
+            data.to_parquet(path=path)
         else:
             raise ValueError(f"Format '{format}' not saveable as pandas dataframe.")
 
 
-class PandasToS3Writer:
+class _PandasToS3Writer:
     """Very basic pandas DF to S3, no partitioning"""
 
     def __init__(self, write_method: Callable[[pd.DataFrame], None]) -> None:
@@ -260,7 +284,7 @@ class PandasToS3Writer:
         path: str,
         format: PandasOutputFormats,
         glue_info: Optional[str] = None,
-    ) -> PandasToS3Writer:
+    ) -> _PandasToS3Writer:
         try:
             from elabftwcontrol.s3_utils import wr
         except ImportError:
@@ -308,7 +332,7 @@ class PandasToS3Writer:
         return cls(write_method)
 
 
-class PandasToFileWriter:
+class _PandasToFileWriter:
     def __init__(
         self,
         path: Pathlike,
@@ -323,12 +347,12 @@ class PandasToFileWriter:
     ) -> None:
         PandasWriter.write(
             data=data,
-            output=self.path,
+            path=self.path,
             format=self.format,
         )
 
 
-class PandasToStdOutWriter:
+class _PandasToStdOutWriter:
     def __init__(
         self,
         format: PandasOutputFormats,
@@ -342,38 +366,45 @@ class PandasToStdOutWriter:
         buffer = io.BytesIO()
         PandasWriter.write(
             data=data,
-            output=buffer,
+            path=buffer,
             format=self.format,
         )
         sys.stdout.buffer.write(buffer.getvalue())
 
 
+class _SplitDataFrame(Protocol):
+    key: str
+    data: pd.DataFrame
+
+
 class ExcelWriter:
-    def __init__(self, writer: Callable[[Iterable[SplitDataFrame]], None]) -> None:
+    """Writes multiple dataframes to different sheets in one Excel file"""
+
+    def __init__(self, writer: Callable[[Iterable[_SplitDataFrame]], None]) -> None:
         self.writer = writer
 
     def __call__(
         self,
-        sheets: Iterable[SplitDataFrame],
+        sheets: Iterable[_SplitDataFrame],
     ) -> None:
         self.writer(sheets)
 
     @classmethod
-    def from_output(cls, path: Optional[Pathlike]) -> ExcelWriter:
-        writer: Callable[[Iterable[SplitDataFrame]], None]
+    def new(cls, path: Optional[Pathlike] = None) -> ExcelWriter:
+        writer: Callable[[Iterable[_SplitDataFrame]], None]
         if path is None:
-            writer = ExcelToStdOutWriter()
+            writer = _ExcelToStdOutWriter()
         elif str(path).startswith("s3://"):
             raise NotImplementedError("Currently can't store Excels directly on S3.")
         else:
-            writer = ExcelToFileWriter(path=path)
+            writer = _ExcelToFileWriter(path=path)
         return cls(writer=writer)
 
     @classmethod
     def write(
         cls,
         excelwriter: pd.ExcelWriter,
-        sheets: Iterable[SplitDataFrame],
+        sheets: Iterable[_SplitDataFrame],
     ) -> None:
         with excelwriter:
             for sheet in sheets:
@@ -389,6 +420,7 @@ class ExcelWriter:
 
     @classmethod
     def get_table_range(cls, df: pd.DataFrame) -> str:
+        """Get the data range in Excel based on the dataframe shape"""
         n_rows, n_cols = df.shape
         alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
         digits = [digit - 1 for digit in number_to_base(n_cols - 1, 26)]
@@ -401,10 +433,10 @@ class ExcelWriter:
         return {"columns": [{"header": column} for column in df.columns]}
 
 
-class ExcelToStdOutWriter:
+class _ExcelToStdOutWriter:
     def __call__(
         self,
-        sheets: Iterable[SplitDataFrame],
+        sheets: Iterable[_SplitDataFrame],
     ) -> None:
         buffer = io.BytesIO()
         writer = pd.ExcelWriter(
@@ -415,7 +447,7 @@ class ExcelToStdOutWriter:
         sys.stdout.buffer.write(buffer.getvalue())
 
 
-class ExcelToFileWriter:
+class _ExcelToFileWriter:
     def __init__(
         self,
         path: Pathlike,
@@ -424,7 +456,7 @@ class ExcelToFileWriter:
 
     def __call__(
         self,
-        sheets: Iterable[SplitDataFrame],
+        sheets: Iterable[_SplitDataFrame],
     ) -> None:
         writer = pd.ExcelWriter(
             self.path,

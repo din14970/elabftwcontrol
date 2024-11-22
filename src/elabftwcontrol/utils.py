@@ -148,3 +148,15 @@ def parse_optional_float(value: Optional[str]) -> Optional[float]:
 
 def parse_optional_int(value: Optional[str]) -> Optional[int]:
     return parse_optional(value, int)
+
+
+def parse_tag_str(data: Any) -> Optional[List[str]]:
+    if isinstance(data, str):
+        data = data.split("|")
+    return data
+
+
+def parse_tag_id_str(data: Any) -> Optional[List[int]]:
+    if isinstance(data, str):
+        data = [int(tag_id) for tag_id in data.split(",")]
+    return data

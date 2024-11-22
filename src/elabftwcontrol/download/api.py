@@ -19,15 +19,9 @@ from pydantic import BaseModel, model_validator
 
 from elabftwcontrol._logging import logger
 from elabftwcontrol.client import ElabftwApi, Experiment, Item
-from elabftwcontrol.download.interfaces import Category, Dictable
-from elabftwcontrol.download.metadata import MetadataParser, ParsedMetadataToPandasDtype
-from elabftwcontrol.download.output import (
-    ExcelWriter,
-    LineWriter,
-    OutputFormats,
-    PandasWriter,
-)
-from elabftwcontrol.download.transformers import (
+from elabftwcontrol.core.interfaces import Category, Dictable
+from elabftwcontrol.core.metadata import MetadataParser, ParsedMetadataToPandasDtype
+from elabftwcontrol.core.transformers import (
     JSONTransformer,
     MultiPandasDataFrameTransformer,
     ObjectTypes,
@@ -36,6 +30,12 @@ from elabftwcontrol.download.transformers import (
     SplitDataFrame,
     TableCellContentType,
     TableShapes,
+)
+from elabftwcontrol.download.output import (
+    ExcelWriter,
+    LineWriter,
+    OutputFormats,
+    PandasWriter,
 )
 from elabftwcontrol.global_config import GlobalConfig
 
@@ -557,16 +557,18 @@ class IngestJob:
 
 
 class JSONConverter(NamedTuple):
+    """Converts API objects to JSON and saves them to a file"""
+
     config: IngestConfiguration
 
     def __call__(
         self,
         objects: Iterable[Dictable],
     ) -> None:
-        transformed = self.transform(objects)
-        self.save(transformed)
+        transformed = self._transform(objects)
+        self._save(transformed)
 
-    def transform(
+    def _transform(
         self,
         objects: Iterable[Dictable],
     ) -> Iterator[str]:
@@ -575,7 +577,7 @@ class JSONConverter(NamedTuple):
         lines = transformer(objects)
         return lines
 
-    def save(
+    def _save(
         self,
         lines: Iterable[str],
     ) -> None:
@@ -584,6 +586,8 @@ class JSONConverter(NamedTuple):
 
 
 class SinglePandasTableConverter(NamedTuple):
+    """Convert API objects to a pandas DF and save to a file"""
+
     config: IngestConfiguration
     category_info: CategoryInfo
 
@@ -591,10 +595,10 @@ class SinglePandasTableConverter(NamedTuple):
         self,
         objects: Iterable[Dictable],
     ) -> None:
-        transformed = self.transform(objects)
-        self.save(transformed)
+        transformed = self._transform(objects)
+        self._save(transformed)
 
-    def transform(
+    def _transform(
         self,
         objects: Iterable[Dictable],
     ) -> pd.DataFrame:
@@ -604,7 +608,7 @@ class SinglePandasTableConverter(NamedTuple):
 
         if self.config.table_shape == TableShapes.WIDE:
             logger.info("Deriving metadata schema for wide format")
-            metadata_schema = self.get_category_metadata_schema()
+            metadata_schema = self._get_category_metadata_schema()
             transformer = PandasDataFrameMetadataTransformer.for_wide_table(
                 object_type=self.config.object_type,
                 cell_content=self.config.cell_content,
@@ -618,19 +622,14 @@ class SinglePandasTableConverter(NamedTuple):
             )
         return transformer(raw_table)
 
-    def save(
-        self,
-        df: pd.DataFrame,
-    ) -> None:
+    def _save(self, df: pd.DataFrame) -> None:
         single_writer = PandasWriter.new(
             self.config.output,
             format=self.config.format,
         )
         single_writer(df)
 
-    def get_category_metadata_schema(
-        self,
-    ) -> Optional[dict[str, str]]:
+    def _get_category_metadata_schema(self) -> Optional[dict[str, str]]:
         if self.config.use_template_metadata_schema:
             category_ids = self.category_info.get_ids(self.config.categories)
             logger.debug("We need category metadata based on ids: %s" % category_ids)
@@ -651,6 +650,8 @@ class SinglePandasTableConverter(NamedTuple):
 
 
 class ExcelConverter(NamedTuple):
+    """Converts API objects to multiple dataframes and saves them to an Excel"""
+
     config: IngestConfiguration
     category_info: CategoryInfo
 
@@ -658,10 +659,10 @@ class ExcelConverter(NamedTuple):
         self,
         objects: Iterable[Dictable],
     ) -> None:
-        split_tables = self.transform(objects)
-        self.save(split_tables)
+        split_tables = self._transform(objects)
+        self._save(split_tables)
 
-    def transform(
+    def _transform(
         self,
         objects: Iterable[Dictable],
     ) -> Iterator[SplitDataFrame]:
@@ -673,7 +674,7 @@ class ExcelConverter(NamedTuple):
             )
         else:
             if self.config.table_shape == TableShapes.WIDE:
-                categories_metadata_schema = self.get_categories_metadata_schemas()
+                categories_metadata_schema = self._get_categories_metadata_schemas()
                 multi_tables = MultiPandasDataFrameTransformer.for_wide_tables(
                     object_type=self.config.object_type,
                     categories_metadata_schema=categories_metadata_schema,
@@ -688,14 +689,14 @@ class ExcelConverter(NamedTuple):
                 )
         return multi_tables(raw_table)
 
-    def save(
+    def _save(
         self,
         dataframes: Iterable[SplitDataFrame],
     ) -> None:
         writer = ExcelWriter.from_output(self.config.output)
         writer(dataframes)
 
-    def get_categories_metadata_schemas(
+    def _get_categories_metadata_schemas(
         self,
     ) -> Optional[dict[str, Optional[dict[str, str]]]]:
         if self.config.use_template_metadata_schema:
@@ -776,6 +777,7 @@ class CategoryInfo:
             category_ids = self.categories_map.keys()
 
         categories_metadata_schema: dict[str, Optional[dict[str, Any]]] = {}
+
         for category_id in category_ids:
             category = self.categories_map[category_id]
             if category.title in categories_metadata_schema:
@@ -801,6 +803,7 @@ class CategoryInfo:
             category_ids = self.categories_map.keys()
 
         categories_metadata_schema: dict[int, Optional[dict[str, Any]]] = {}
+
         for category_id in category_ids:
             schema = self.get_metadata_schema(
                 cell_content=cell_content,

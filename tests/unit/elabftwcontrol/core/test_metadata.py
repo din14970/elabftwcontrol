@@ -4,7 +4,7 @@ from typing import Any, Callable, Optional
 
 import pytest
 
-from elabftwcontrol.download.metadata import (
+from elabftwcontrol.core.metadata import (
     MetadataField,
     MetadataParser,
     ParsedMetadataToMetadataFieldList,

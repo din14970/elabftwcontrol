@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
 from enum import Enum
 from typing import (
     Any,
@@ -19,8 +20,8 @@ from typing import (
 import pandas as pd
 
 from elabftwcontrol._logging import logger
-from elabftwcontrol.download.interfaces import Dictable, HasIDAndMetadata
-from elabftwcontrol.download.metadata import (
+from elabftwcontrol.core.interfaces import Dictable, HasIDAndMetadata
+from elabftwcontrol.core.metadata import (
     MetadataField,
     MetadataParser,
     ParsedMetadataToMetadataFieldList,
@@ -73,6 +74,24 @@ DEFAULT_ITEMS_TYPE_SCHEMA: Final[dict[str, str]] = {
 
 
 T = TypeVar("T")
+
+
+class YAMLTransformer:
+    def __call__(
+        self,
+        objects: Iterable[Dictable],
+    ) -> Iterator[str]:
+        # TODO
+        definitions = DefinitionTransformer()(objects)
+
+
+class DefinitionTransformer:
+    def __call__(
+        self,
+        objects: Iterable[Dictable],
+    ) -> Iterator[ElabObjManifest]:
+        # TODO
+        pass
 
 
 class JSONTransformer:
@@ -145,7 +164,8 @@ class ObjectTypes(str, Enum):
     EXPERIMENTS_TEMPLATE = "experiments_template"
 
 
-class SplitDataFrame(NamedTuple):
+@dataclass
+class SplitDataFrame:
     key: str
     data: pd.DataFrame
 
@@ -287,11 +307,11 @@ class MultiPandasDataFrameTransformer:
         splitter: Callable[[pd.DataFrame], Iterable[SplitDataFrame]],
         df_transform_getter: Callable[[str], Callable[[pd.DataFrame], pd.DataFrame]],
     ) -> Iterator[SplitDataFrame]:
-        for key, df in splitter(raw_df):
-            transformer = df_transform_getter(key)
-            transformed = transformer(df)
+        for split_df in splitter(raw_df):
+            transformer = df_transform_getter(split_df.key)
+            transformed = transformer(split_df.data)
             yield SplitDataFrame(
-                key=key,
+                key=split_df.key,
                 data=transformed,
             )
 

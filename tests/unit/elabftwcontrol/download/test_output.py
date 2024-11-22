@@ -1,24 +1,15 @@
-from contextlib import nullcontext as does_not_raise
 from io import StringIO
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import ContextManager
 from unittest.mock import Mock, patch
 
 import pandas as pd
 import pytest
 
-from elabftwcontrol.download.interfaces import CSVWriterInterface, LineWriterInterface
 from elabftwcontrol.download.output import (
-    CSVToFileWriter,
-    CSVToStdOutWriter,
     CSVWriter,
     ExcelWriter,
     LineWriter,
-    S3TextWriter,
-    SplitDataFrame,
-    StdOutWriter,
-    TextFileWriter,
 )
 
 
@@ -33,7 +24,7 @@ line5""",
         ]
         filepath = Path(tmpdir) / "test_file.csv"
 
-        writer = TextFileWriter(output=filepath)
+        writer = LineWriter.new(filepath)
         writer(data)
 
         with open(filepath, "r") as f:
@@ -59,7 +50,7 @@ line4
 line5""",
         ]
 
-        writer = StdOutWriter()
+        writer = LineWriter.new()
         writer(data)
 
         expected = """\
@@ -70,25 +61,6 @@ line4
 line5
 """
         assert expected == fake_out.getvalue()
-
-
-@pytest.mark.parametrize(
-    ("output", "result", "expectation"),
-    (
-        ("this/is/a/test/path", TextFileWriter, does_not_raise(None)),
-        (None, StdOutWriter, does_not_raise(None)),
-        ("s3://mybucket/some/path", S3TextWriter, does_not_raise(None)),
-    ),
-)
-def test_line_writer_init_from_str(
-    output: str,
-    result: LineWriterInterface,
-    expectation: ContextManager,
-) -> None:
-    with expectation:
-        writer = LineWriter.from_output(output)
-        assert isinstance(writer, LineWriter)
-        assert isinstance(writer.line_writer, result)
 
 
 def test_csv_writer_write_rows() -> None:
@@ -116,25 +88,6 @@ def test_csv_writer_write_rows() -> None:
         assert expected == content
 
 
-@pytest.mark.parametrize(
-    ("output", "result", "expectation"),
-    (
-        ("this/is/a/test/path", CSVToFileWriter, does_not_raise(None)),
-        (None, CSVToStdOutWriter, does_not_raise(None)),
-        ("s3://mybucket/some/path", None, pytest.raises(NotImplementedError)),
-    ),
-)
-def test_csv_writer_init_from_str(
-    output: str,
-    result: CSVWriterInterface,
-    expectation: ContextManager,
-) -> None:
-    with expectation:
-        writer = CSVWriter.from_output(output, header=[])
-        assert isinstance(writer, CSVWriter)
-        assert isinstance(writer.writer, result)
-
-
 def test_csv_to_file_writer() -> None:
     with TemporaryDirectory() as tmpdir:
         data = [
@@ -145,7 +98,7 @@ def test_csv_to_file_writer() -> None:
         ]
         filepath = Path(tmpdir) / "test_file.csv"
 
-        writer = CSVToFileWriter(
+        writer = CSVWriter.new(
             path=filepath,
             header=["col1", "col2"],
         )
@@ -172,7 +125,7 @@ def test_csv_to_stdout_writer() -> None:
             {"col2": 4, "col3": 5},
         ]
 
-        writer = CSVToStdOutWriter(header=["col1", "col2"])
+        writer = CSVWriter.new(header=["col1", "col2"])
         writer(data)
 
         expected = """\
@@ -225,18 +178,18 @@ class TestExcelWriter:
             )
 
             output = [
-                SplitDataFrame(
+                Mock(
                     key="sheet_1",
                     data=df_1,
                 ),
-                SplitDataFrame(
+                Mock(
                     key="sheet_2",
                     data=df_2,
                 ),
             ]
 
             test_file = Path(tmpdir) / "test_file.xlsx"
-            writer = ExcelWriter.from_output(test_file)
+            writer = ExcelWriter.new(test_file)
             writer(output)
 
             for sheet, df in zip(("sheet_1", "sheet_2"), (df_1, df_2)):

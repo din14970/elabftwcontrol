@@ -133,7 +133,7 @@ def _set_logger_verbosity(verbosity: int) -> None:
 def get(
     object_type: Annotated[
         ObjectTypes,
-        typer.Argument(help="Which type of item to ingest."),
+        typer.Argument(help="Which type of resource to ingest."),
     ],
     format: Annotated[
         OutputFormats,
