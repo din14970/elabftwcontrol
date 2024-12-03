@@ -6,11 +6,7 @@ from unittest.mock import Mock, patch
 import pandas as pd
 import pytest
 
-from elabftwcontrol.download.output import (
-    CSVWriter,
-    ExcelWriter,
-    LineWriter,
-)
+from elabftwcontrol.download.output import CSVWriter, ExcelWriter, LineWriter
 
 
 def test_text_to_file_writer() -> None:

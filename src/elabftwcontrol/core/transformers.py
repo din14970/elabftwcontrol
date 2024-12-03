@@ -21,6 +21,7 @@ import pandas as pd
 
 from elabftwcontrol._logging import logger
 from elabftwcontrol.core.interfaces import Dictable, HasIDAndMetadata
+from elabftwcontrol.core.manifests import ElabObjManifest
 from elabftwcontrol.core.metadata import (
     MetadataField,
     MetadataParser,
@@ -81,8 +82,7 @@ class YAMLTransformer:
         self,
         objects: Iterable[Dictable],
     ) -> Iterator[str]:
-        # TODO
-        definitions = DefinitionTransformer()(objects)
+        raise NotImplementedError
 
 
 class DefinitionTransformer:
@@ -90,8 +90,7 @@ class DefinitionTransformer:
         self,
         objects: Iterable[Dictable],
     ) -> Iterator[ElabObjManifest]:
-        # TODO
-        pass
+        raise NotImplementedError
 
 
 class JSONTransformer:

@@ -11,18 +11,16 @@ from elabftwcontrol.core.manifests import (
     ElabObjManifests,
     ExperimentManifest,
     ExperimentSpecManifest,
-    ExperimentSpecManifestNestedMetadata,
     ExperimentSpecManifestSimplifiedMetadata,
     ExperimentTemplateManifest,
     ExperimentTemplateSpecManifest,
-    ExperimentTemplateSpecManifestNestedMetadata,
+    ExtraFields,
     ExtraFieldsManifest,
     ItemManifest,
     ItemSpecManifest,
     ItemSpecManifestSimplifiedMetadata,
     ItemsTypeManifest,
     ItemsTypeSpecManifest,
-    ItemsTypeSpecManifestNestedMetadata,
     ManifestIndex,
     MetadataCheckboxFieldManifest,
     MetadataDateFieldManifest,
@@ -39,7 +37,6 @@ from elabftwcontrol.core.manifests import (
     MetadataTextFieldManifest,
     MetadataTimeFieldManifest,
     MetadataURLFieldManifest,
-    NestedExtraFieldsManifest,
     Node,
     SimpleExtraFieldsManifest,
     _ValueAndUnit,
@@ -635,8 +632,8 @@ fields:
         )
         assert verified == expected
 
-    def test_extra_fields_manifest_get_item(self) -> None:
-        loaded = ExtraFieldsManifest(**self.parsed)
+    def test_extra_fields_get_item(self) -> None:
+        loaded = ExtraFieldsManifest(**self.parsed).to_full_representation()
         assert loaded["field 1 group 1"] == MetadataSelectFieldManifest(
             name="field 1 group 1",
             value="option 1",
@@ -673,11 +670,11 @@ fields:
 """
         parsed = yaml.safe_load(data)
         with pytest.raises(ValueError):
-            ExtraFieldsManifest(**parsed)
+            ExtraFieldsManifest(**parsed).to_full_representation()
 
     def test_extra_fields_manifest_iter(self) -> None:
-        manifest = ExtraFieldsManifest(**self.parsed)
-        result = [(field.group, field.name) for field in manifest.iter()]
+        manifest = ExtraFieldsManifest(**self.parsed).to_full_representation()
+        result = [(field.group, field.name) for field in manifest.fields]
         expected = [
             ("group 1", "field 1 group 1"),
             ("group 1", "field 2 group 1"),
@@ -721,18 +718,18 @@ fields:
         )
         assert result == expected
 
-    def test_extra_fields_get_field_map(self) -> None:
-        manifest = ExtraFieldsManifest(**self.parsed_linked)
-        result = manifest.get_field_map()
-        expected = {
-            "link 1": 0,
-            "field 2 group 1": 1,
-            "field 1 group 2": 2,
-            "field 3": 3,
-            "field 4": 4,
-            "field 5": 5,
-            "field 6": 6,
-        }
+    def test_extra_fields_get_field_names(self) -> None:
+        extra_fields = ExtraFields.parse(**self.parsed_linked)
+        result = extra_fields.field_names
+        expected = [
+            "link 1",
+            "field 2 group 1",
+            "field 1 group 2",
+            "field 3",
+            "field 4",
+            "field 5",
+            "field 6",
+        ]
         assert result == expected
 
     nested_data = """\
@@ -759,8 +756,8 @@ fields:
     parsed_nested = yaml.safe_load(nested_data)
 
     def test_nested_extra_fields_manifest(self) -> None:
-        verified = NestedExtraFieldsManifest(**self.parsed_nested)
-        expected = NestedExtraFieldsManifest(
+        verified = ExtraFieldsManifest(**self.parsed_nested)
+        expected = ExtraFieldsManifest(
             config=MetadataManifestConfig(
                 display_main_text=False,
             ),
@@ -813,7 +810,7 @@ fields:
     group: group 2
 """
         parsed = yaml.safe_load(data)
-        validated = NestedExtraFieldsManifest(**parsed)
+        validated = ExtraFieldsManifest(**parsed)
         with pytest.raises(ValueError):
             validated.to_full_representation()
 
@@ -1054,12 +1051,12 @@ spec:
         version=1,
         id="items type test",
         kind="items_type",
-        spec=ItemsTypeSpecManifestNestedMetadata(
+        spec=ItemsTypeSpecManifest(
             title="test item",
             tags=["test tag 1", "test tag 2"],
             body="something",
             color="#123456",
-            extra_fields=NestedExtraFieldsManifest(
+            extra_fields=ExtraFieldsManifest(
                 fields=[
                     MetadataGroupManifest(
                         group_name="group 1",
@@ -1303,12 +1300,12 @@ spec:
     expected = ExperimentManifest(
         version=1,
         id="experiment test",
-        spec=ExperimentSpecManifestNestedMetadata(
+        spec=ExperimentSpecManifest(
             title="test experiment",
             template="experiment template 1",
             tags=["test tag 1", "test tag 2"],
             body="something",
-            extra_fields=NestedExtraFieldsManifest(
+            extra_fields=ExtraFieldsManifest(
                 fields=[
                     MetadataGroupManifest(
                         group_name="group 1",
@@ -1639,9 +1636,9 @@ class TestElabObjManifests:
                     version=1,
                     id="experiment template 1",
                     kind="experiments_template",
-                    spec=ExperimentTemplateSpecManifestNestedMetadata(
+                    spec=ExperimentTemplateSpecManifest(
                         title="test experiments template",
-                        extra_fields=NestedExtraFieldsManifest(
+                        extra_fields=ExtraFieldsManifest(
                             fields=[
                                 MetadataGroupManifest(
                                     group_name="group 1",
@@ -1788,14 +1785,17 @@ class TestManifestIndex:
                     title="test experiments template",
                     extra_fields=ExtraFieldsManifest(
                         fields=[
-                            MetadataTextFieldManifest(
-                                name="field 4",
-                                group="group 1",
-                            ),
-                            MetadataItemsLinkFieldManifest(
-                                name="field 5",
-                                value="item 1",
-                                group="group 1",
+                            MetadataGroupManifest(
+                                group_name="group 1",
+                                sub_fields=[
+                                    MetadataTextFieldManifest(
+                                        name="field 4",
+                                    ),
+                                    MetadataItemsLinkFieldManifest(
+                                        name="field 5",
+                                        value="item 1",
+                                    ),
+                                ],
                             ),
                             MetadataExperimentsLinkFieldManifest(name="field 6"),
                         ]

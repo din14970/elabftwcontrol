@@ -21,7 +21,10 @@ lint:
 	uv run mypy src
 
 test:
-	uv run pytest -v
+	uv run pytest -vv
+
+test-debug:
+	uv run pytest --pdb -vv
 
 requirements:
 	uv lock

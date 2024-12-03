@@ -54,8 +54,8 @@ def test_metadata_model() -> None:
                 value="2023-09-12",
                 group_id="1",
                 position="2",
-            )
-        }
+            ),
+        },
     )
     model = MetadataModel(**dummy_extra_data)
     assert expected == model

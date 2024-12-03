@@ -22,7 +22,7 @@ from typing import (
     get_args,
 )
 
-from elabapi_python import Experiment, ExperimentTemplate, Item, ItemsType
+from elabapi_python import Experiment
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 from typing_extensions import Self
 
@@ -339,37 +339,58 @@ class MetadataGroupManifest(BaseModel):
     sub_fields: List[MetadataFieldManifest]
 
 
-class ExtraFieldsManifest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    config: MetadataManifestConfig = MetadataManifestConfig()
-    fields: Sequence[MetadataFieldManifest] = []
-    # the reason we use an explicit index as values in the dictionary instead of
-    # a direct reference to the manifest, is because on creating the dictionary the
-    # data is apparently copied instead of referenced
-    _field_map: Dict[str, int]
+class ExtraFields:
+    _link_map = {
+        "items": "item",
+        "experiments": "experiment",
+    }
 
-    def model_post_init(self, __context: Any) -> None:
-        self._field_map = self.get_field_map()
+    def __init__(
+        self,
+        config: MetadataManifestConfig,
+        field_map: dict[str, MetadataFieldManifest],
+    ) -> None:
+        self.config = config
+        self.field_map = field_map
+
+    @classmethod
+    def new(
+        cls,
+        config: MetadataManifestConfig,
+        fields: Sequence[MetadataFieldManifest],
+    ) -> Self:
+        field_map = cls.get_field_map(fields)
+        return cls(
+            config=config,
+            field_map=field_map,
+        )
+
+    @property
+    def field_names(self) -> list[str]:
+        return list(self.field_map.keys())
+
+    @property
+    def fields(self) -> Iterator[MetadataFieldManifest]:
+        for field in self.field_map.values():
+            yield field
 
     def __getitem__(self, field_name: str) -> MetadataFieldManifest:
-        index = self._field_map[field_name]
-        return self.fields[index]
+        return self.field_map[field_name]
 
     def __contains__(self, field_name: str) -> bool:
-        return field_name in self._field_map
+        return field_name in self.field_map
 
-    def get_field_map(self) -> dict[str, int]:
+    @classmethod
+    def get_field_map(
+        cls,
+        fields: Sequence[MetadataFieldManifest],
+    ) -> dict[str, MetadataFieldManifest]:
         field_map = {}
-        for i, field in enumerate(self.fields):
+        for field in fields:
             if field.name in field_map:
                 raise ValueError(f"Field name '{field.name}' is duplicated!")
-            field_map[field.name] = i
+            field_map[field.name] = field
         return field_map
-
-    def iter(self) -> Iterator[MetadataFieldManifest]:
-        """Iterate only all fields"""
-        for field in self.fields:
-            yield field
 
     def iter_linkable(
         self,
@@ -377,7 +398,7 @@ class ExtraFieldsManifest(BaseModel):
         MetadataItemsLinkFieldManifest | MetadataExperimentsLinkFieldManifest
     ]:
         """Iterate only over linkable fields"""
-        for field in self.iter():
+        for field in self.fields:
             if isinstance(
                 field,
                 MetadataExperimentsLinkFieldManifest,
@@ -388,16 +409,13 @@ class ExtraFieldsManifest(BaseModel):
                 yield field
 
     def get_dependencies(self) -> set[Node]:
+        """Get items and experiments that depend on this metadata"""
         dependencies: List[Node] = []
-        link_map = {
-            "items": "item",
-            "experiments": "experiment",
-        }
         for field in self.iter_linkable():
             if field.value:
                 dependencies.append(
                     Node(
-                        kind=link_map[field.type],
+                        kind=self._link_map[field.type],
                         id=field.value,
                     )
                 )
@@ -405,8 +423,14 @@ class ExtraFieldsManifest(BaseModel):
         return set(dependencies)
 
     @classmethod
-    def from_model(cls, model: MetadataModel) -> ExtraFieldsManifest:
-        """Convert a parsed metadata JSON to a manifest"""
+    def parse(cls, **kwargs: Any) -> Self:
+        """Shortcut for directly creating ExtraFields from dictionary data"""
+        parsed = ExtraFieldsManifest(**kwargs)
+        return cls.from_manifest(parsed)
+
+    @classmethod
+    def from_model(cls, model: MetadataModel) -> Self:
+        """Convert a parsed metadata JSON to this intermediate representation"""
         if model.elabftw.display_main_text is not None:
             config = MetadataManifestConfig(
                 display_main_text=model.elabftw.display_main_text,
@@ -438,9 +462,36 @@ class ExtraFieldsManifest(BaseModel):
         field_tuples.sort()
         fields = [field_tuple[1] for field_tuple in field_tuples]
 
-        return ExtraFieldsManifest(
+        return cls.new(
             config=config,
             fields=fields,
+        )
+
+    def to_model(self) -> MetadataModel:
+        """Convert manifest to the expected JSON format in eLabFTW"""
+        extra_fields: dict[str, SingleFieldModel] = {}
+        extra_fields_groups: list[GroupModel] = []
+
+        n_group = 1
+        group_map: dict[str, int] = {}
+
+        for i, (field_name, field) in enumerate(self.field_map.items()):
+            group = field.group
+            if group is None:
+                group_id = None
+            else:
+                if group not in group_map:
+                    group_map[group] = n_group
+                    extra_fields_groups.append(GroupModel(id=n_group, name=group))
+                    n_group += 1
+                group_id = group_map[group]
+
+            new_field = field.to_single_field_model(position=i, group_id=group_id)
+            extra_fields[field_name] = new_field
+
+        return MetadataModel(
+            elabftw=ConfigMetadata(extra_fields_groups=extra_fields_groups),
+            extra_fields=extra_fields,
         )
 
     @classmethod
@@ -458,43 +509,11 @@ class ExtraFieldsManifest(BaseModel):
             model=field,
         )
 
-    def to_model(self) -> MetadataModel:
-        """Convert manifest to the expected format"""
-        extra_fields: dict[str, SingleFieldModel] = {}
-        extra_fields_groups: list[GroupModel] = []
-
-        n_group = 1
-        group_map: dict[str, int] = {}
-
-        for i, field in enumerate(self.iter()):
-            group = field.group
-            if group is None:
-                group_id = None
-            else:
-                if group not in group_map:
-                    group_map[group] = n_group
-                    extra_fields_groups.append(GroupModel(id=n_group, name=group))
-                    n_group += 1
-                group_id = group_map[group]
-
-            new_field = field.to_single_field_model(position=i, group_id=group_id)
-            extra_fields[field.name] = new_field
-
-        return MetadataModel(
-            elabftw=ConfigMetadata(extra_fields_groups=extra_fields_groups),
-            extra_fields=extra_fields,
-        )
-
-
-class NestedExtraFieldsManifest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    config: MetadataManifestConfig = MetadataManifestConfig()
-    fields: List[Union[MetadataFieldManifest, MetadataGroupManifest]] = []
-
-    def to_full_representation(self) -> ExtraFieldsManifest:
+    @classmethod
+    def from_manifest(cls, manifest: ExtraFieldsManifest) -> Self:
         expanded_fields: list[MetadataFieldManifest] = []
 
-        for data in self.fields:
+        for data in manifest.fields:
             if isinstance(data, MetadataGroupManifest):
                 for subfield in data.sub_fields:
                     if subfield.group is not None and subfield.group != data.group_name:
@@ -511,10 +530,28 @@ class NestedExtraFieldsManifest(BaseModel):
                 field_copy = data.model_copy(deep=True)
                 expanded_fields.append(field_copy)
 
-        return ExtraFieldsManifest(
-            config=self.config.model_copy(),
+        return cls.new(
+            config=manifest.config.model_copy(),
             fields=expanded_fields,
         )
+
+    def to_manifest(self) -> ExtraFieldsManifest:
+        return ExtraFieldsManifest(
+            config=self.config,
+            fields=list(self.fields),
+        )
+
+
+class ExtraFieldsManifest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    config: MetadataManifestConfig = MetadataManifestConfig()
+    fields: Sequence[Union[MetadataFieldManifest, MetadataGroupManifest]] = []
+
+    def to_full_representation(self) -> ExtraFields:
+        return ExtraFields.from_manifest(self)
+
+    def get_dependencies(self) -> set[Node]:
+        return self.to_full_representation().get_dependencies()
 
 
 class _ValueAndUnit(BaseModel):
@@ -533,7 +570,7 @@ class SimpleExtraFieldsManifest(BaseModel):
         self,
         parent_extra_fields: ExtraFieldsManifest,
     ) -> ExtraFieldsManifest:
-        extra_fields = parent_extra_fields.model_copy(deep=True)
+        extra_fields = parent_extra_fields.to_full_representation()
 
         if self.config is not None:
             extra_fields.config = self.config
@@ -554,7 +591,7 @@ class SimpleExtraFieldsManifest(BaseModel):
             if unit is not None and isinstance(field, MetadataNumberFieldManifest):
                 field.unit = unit
 
-        return extra_fields
+        return extra_fields.to_manifest()
 
 
 class BaseElabObjManifest(BaseModel):
@@ -573,36 +610,17 @@ class ItemsTypeSpecManifest(BaseElabObjSpecManifest):
     extra_fields: Optional[ExtraFieldsManifest] = None
 
     def get_dependencies(self) -> set[Node]:
-        if self.extra_fields is not None:
-            return self.extra_fields.get_dependencies()
-        else:
+        if self.extra_fields is None:
             return set()
-
-
-class ItemsTypeSpecManifestNestedMetadata(BaseElabObjSpecManifest):
-    title: str
-    tags: Optional[Sequence[str]] = None
-    body: Optional[str] = None
-    color: Optional[str] = None
-    extra_fields: NestedExtraFieldsManifest
-
-    def to_full_representation(self) -> ItemsTypeSpecManifest:
-        data = self.model_dump()
-        data["extra_fields"] = self.extra_fields.to_full_representation()
-        return ItemsTypeSpecManifest(**data)
+        else:
+            return self.extra_fields.get_dependencies()
 
 
 class ItemsTypeManifest(BaseElabObjManifest):
     version: int = 1
     id: str
     kind: Literal["items_type"] = "items_type"
-    spec: ItemsTypeSpecManifest | ItemsTypeSpecManifestNestedMetadata
-
-    def render_spec(self) -> ItemsTypeSpecManifest:
-        if isinstance(self.spec, ItemsTypeSpecManifestNestedMetadata):
-            return self.spec.to_full_representation()
-        else:
-            return self.spec
+    spec: ItemsTypeSpecManifest
 
 
 class ExperimentTemplateSpecManifest(BaseElabObjSpecManifest):
@@ -612,35 +630,17 @@ class ExperimentTemplateSpecManifest(BaseElabObjSpecManifest):
     extra_fields: Optional[ExtraFieldsManifest] = None
 
     def get_dependencies(self) -> set[Node]:
-        if self.extra_fields is not None:
-            return self.extra_fields.get_dependencies()
-        else:
+        if self.extra_fields is None:
             return set()
-
-
-class ExperimentTemplateSpecManifestNestedMetadata(BaseElabObjSpecManifest):
-    title: str
-    tags: Optional[Sequence[str]] = None
-    body: Optional[str] = None
-    extra_fields: NestedExtraFieldsManifest
-
-    def to_full_representation(self) -> ExperimentTemplateSpecManifest:
-        data = self.model_dump()
-        data["extra_fields"] = self.extra_fields.to_full_representation()
-        return ExperimentTemplateSpecManifest(**data)
+        else:
+            return self.extra_fields.get_dependencies()
 
 
 class ExperimentTemplateManifest(BaseElabObjManifest):
     version: int = 1
     id: str
     kind: Literal["experiments_template"] = "experiments_template"
-    spec: ExperimentTemplateSpecManifest | ExperimentTemplateSpecManifestNestedMetadata
-
-    def render_spec(self) -> ExperimentTemplateSpecManifest:
-        if isinstance(self.spec, ExperimentTemplateSpecManifestNestedMetadata):
-            return self.spec.to_full_representation()
-        else:
-            return self.spec
+    spec: ExperimentTemplateSpecManifest
 
 
 class ItemSpecManifest(BaseElabObjSpecManifest):
@@ -661,20 +661,6 @@ class ItemSpecManifest(BaseElabObjSpecManifest):
             dependencies = dependencies.union(self.extra_fields.get_dependencies())
 
         return dependencies
-
-
-class ItemSpecManifestNestedMetadata(BaseElabObjSpecManifest):
-    title: str
-    tags: Optional[Sequence[str]] = None
-    body: Optional[str] = None
-    category: str
-    color: Optional[str] = None
-    extra_fields: NestedExtraFieldsManifest
-
-    def to_full_representation(self) -> ItemSpecManifest:
-        data = self.model_dump()
-        data["extra_fields"] = self.extra_fields.to_full_representation()
-        return ItemSpecManifest(**data)
 
 
 class ItemSpecManifestSimplifiedMetadata(BaseElabObjSpecManifest):
@@ -709,17 +695,11 @@ class ItemManifest(BaseElabObjManifest):
     version: int = 1
     id: str
     kind: Literal["item"] = "item"
-    spec: (
-        ItemSpecManifest
-        | ItemSpecManifestNestedMetadata
-        | ItemSpecManifestSimplifiedMetadata
-    )
+    spec: ItemSpecManifest | ItemSpecManifestSimplifiedMetadata
 
     def render_spec(self, parent: ItemsTypeSpecManifest) -> ItemSpecManifest:
         if isinstance(self.spec, ItemSpecManifestSimplifiedMetadata):
             return self.spec.to_full_representation(parent)
-        elif isinstance(self.spec, ItemSpecManifestNestedMetadata):
-            return self.spec.to_full_representation()
         else:
             return self.spec
 
@@ -742,19 +722,6 @@ class ExperimentSpecManifest(BaseElabObjSpecManifest):
             dependencies = dependencies.union(self.extra_fields.get_dependencies())
 
         return dependencies
-
-
-class ExperimentSpecManifestNestedMetadata(BaseElabObjSpecManifest):
-    title: str
-    tags: Optional[Sequence[str]] = None
-    body: Optional[str] = None
-    template: Optional[str] = None
-    extra_fields: NestedExtraFieldsManifest
-
-    def to_full_representation(self) -> ExperimentSpecManifest:
-        data = self.model_dump()
-        data["extra_fields"] = self.extra_fields.to_full_representation()
-        return ExperimentSpecManifest(**data)
 
 
 class ExperimentSpecManifestSimplifiedMetadata(BaseElabObjSpecManifest):
@@ -788,11 +755,7 @@ class ExperimentManifest(BaseElabObjManifest):
     version: int = 1
     id: str
     kind: Literal["experiment"] = "experiment"
-    spec: (
-        ExperimentSpecManifest
-        | ExperimentSpecManifestNestedMetadata
-        | ExperimentSpecManifestSimplifiedMetadata
-    )
+    spec: ExperimentSpecManifest | ExperimentSpecManifestSimplifiedMetadata
 
     def render_spec(
         self,
@@ -802,8 +765,6 @@ class ExperimentManifest(BaseElabObjManifest):
             if parent is None:
                 raise ValueError(f"Template needed for experiment '{self.id}'")
             return self.spec.to_full_representation(parent)
-        elif isinstance(self.spec, ExperimentSpecManifestNestedMetadata):
-            return self.spec.to_full_representation()
         else:
             return self.spec
 
@@ -812,13 +773,14 @@ class ExperimentManifest(BaseElabObjManifest):
         cls,
         obj: Experiment,
     ) -> ExperimentManifest:
+        extra_fields_manifest = ExtraFields.from_model(obj.metadata).to_manifest()
         return cls(
             id=f"experiment_{obj.id}",
             spec=ExperimentSpecManifest(
                 title=obj.title,
                 tags=parse_tag_str(obj.tags),
                 body=obj.body,
-                extra_fields=ExtraFieldsManifest.from_metadata(obj.metadata),
+                extra_fields=extra_fields_manifest,
             ),
         )
 
@@ -880,14 +842,14 @@ class ManifestIndex(NamedTuple):
         items_types_spec: dict[str, ItemsTypeSpecManifest] = {}
 
         for node, items_type in items_types.items():
-            items_type_spec = items_type.render_spec()
+            items_type_spec = items_type.spec
             items_types_spec[node.id] = items_type_spec
             cls._add_dependencies_to_graph(node, items_type_spec, dependency_graph)
 
         experiment_templates_spec: dict[str, ExperimentTemplateSpecManifest] = {}
 
         for node, experiment_template in experiment_templates.items():
-            experiment_template_spec = experiment_template.render_spec()
+            experiment_template_spec = experiment_template.spec
             experiment_templates_spec[node.id] = experiment_template_spec
             cls._add_dependencies_to_graph(
                 node, experiment_template_spec, dependency_graph
