@@ -18,18 +18,20 @@ from typing import (
 )
 
 import pandas as pd
+from typing_extensions import Self
 
 from elabftwcontrol._logging import logger
 from elabftwcontrol.core.interfaces import Dictable, HasIDAndMetadata
 from elabftwcontrol.core.manifests import ElabObjManifest
 from elabftwcontrol.core.metadata import (
     MetadataField,
-    MetadataParser,
     ParsedMetadataToMetadataFieldList,
     ParsedMetadataToPandasDtype,
     ParsedMetadataToSimpleDict,
     TableCellContentType,
 )
+from elabftwcontrol.core.models import MetadataModel
+from elabftwcontrol.core.parsers import MetadataParser
 from elabftwcontrol.download.utils import do_nothing, sanitize_name_for_glue
 
 DEFAULT_ITEM_SCHEMA: Final[dict[str, str]] = {
@@ -96,39 +98,34 @@ class DefinitionTransformer:
 class JSONTransformer:
     def __init__(
         self,
-        indent: Optional[int] = 2,
+        dict_transformer: Callable[[Iterable[Dictable]], Iterator[dict[str, Any]]],
+        string_transformer: Callable[[Iterable[dict[str, Any]]], Iterator[str]],
     ) -> None:
-        self.indent = indent
+        self._dict_transformer = dict_transformer
+        self._string_transformer = string_transformer
+
+    @classmethod
+    def new(
+        cls,
+        indent: Optional[int] = 2,
+    ) -> Self:
+        return cls(
+            dict_transformer=_DictTransformer(),
+            string_transformer=_JSONStringTransformer(indent=indent),
+        )
 
     def __call__(
         self,
         objects: Iterable[Dictable],
     ) -> Iterator[str]:
-        dictionaries = _DictTransformer()(objects)
-        jsonstrings = _JSONStringTransformer(indent=self.indent)(dictionaries)
-        return jsonstrings
-
-    @classmethod
-    def transform(
-        cls,
-        obj: Dictable,
-        indent: Optional[int],
-    ) -> str:
-        dictionary = _DictTransformer.transform(obj)
-        return _JSONStringTransformer.transform(dictionary, indent)
+        dictionaries = self._dict_transformer(objects)
+        return self._string_transformer(dictionaries)
 
 
 class _DictTransformer:
     def __call__(self, objects: Iterable[Dictable]) -> Iterator[dict[str, Any]]:
         for obj in objects:
-            yield self.transform(obj)
-
-    @classmethod
-    def transform(
-        cls,
-        obj: Dictable,
-    ) -> dict[str, Any]:
-        return obj.to_dict()
+            yield obj.to_dict()
 
 
 class _JSONStringTransformer:
@@ -140,15 +137,7 @@ class _JSONStringTransformer:
 
     def __call__(self, objects: Iterable[dict[str, Any]]) -> Iterator[str]:
         for obj in objects:
-            yield self.transform(obj, self.indent)
-
-    @classmethod
-    def transform(
-        cls,
-        obj: dict[str, Any],
-        indent: Optional[int],
-    ) -> str:
-        return json.dumps(obj, indent=indent)
+            yield json.dumps(obj, indent=self.indent)
 
 
 class TableShapes(str, Enum):
@@ -193,12 +182,26 @@ class MultiPandasDataFrameTransformer:
         self.df_transform_getter = df_transform_getter
         self.splitter = splitter
 
+    def __call__(self, raw_df: pd.DataFrame) -> Iterator[SplitDataFrame]:
+        for split_df in self.split(raw_df):
+            transformed = self.transform(split_df)
+            yield SplitDataFrame(
+                key=split_df.key,
+                data=transformed,
+            )
+
+    def split(self, df: pd.DataFrame) -> Iterable[SplitDataFrame]:
+        return self.splitter(df)
+
+    def transform(self, split_df: SplitDataFrame) -> pd.DataFrame:
+        return self.df_transform_getter(split_df.key)(split_df.data)
+
     @classmethod
     def for_raw_tables(
         cls,
         object_type: ObjectTypes,
         categories: Optional[Sequence[str]] = None,
-    ) -> MultiPandasDataFrameTransformer:
+    ) -> Self:
         def df_transform_getter(
             category: Hashable,
         ) -> Callable[[pd.DataFrame], pd.DataFrame]:
@@ -216,7 +219,7 @@ class MultiPandasDataFrameTransformer:
         cls,
         object_type: ObjectTypes,
         categories: Optional[Sequence[str]] = None,
-    ) -> MultiPandasDataFrameTransformer:
+    ) -> Self:
         def df_transform_getter(
             category: Hashable,
         ) -> Callable[[pd.DataFrame], pd.DataFrame]:
@@ -240,8 +243,7 @@ class MultiPandasDataFrameTransformer:
         ] = None,
         cell_content: TableCellContentType = TableCellContentType.COMBINED,
         sanitize_column_names: bool = False,
-        order_columns: bool = False,
-    ) -> MultiPandasDataFrameTransformer:
+    ) -> Self:
         def df_transform_getter(
             category: str,
         ) -> Callable[[pd.DataFrame], pd.DataFrame]:
@@ -254,7 +256,6 @@ class MultiPandasDataFrameTransformer:
                 cell_content=cell_content,
                 metadata_schema=metadata_schema,
                 sanitize_column_names=sanitize_column_names,
-                order_columns=order_columns,
             )
 
         if categories_metadata_schema is None:
@@ -277,7 +278,7 @@ class MultiPandasDataFrameTransformer:
     ) -> Callable[[pd.DataFrame], Iterable[SplitDataFrame]]:
         match object_type:
             case ObjectTypes.ITEM:
-                splitter = cls.get_single_column_splitter("category_title")
+                splitter = cls._get_single_column_splitter("category_title")
             case ObjectTypes.EXPERIMENT:
                 if not categories:
                     raise ValueError(
@@ -287,35 +288,13 @@ class MultiPandasDataFrameTransformer:
                 logger.warning(
                     "Experiments are split up by template name, which must appear in the title"
                 )
-                splitter = cls.get_substring_splitter("title", categories)
+                splitter = cls._get_substring_splitter("title", categories)
             case _:
-                splitter = cls.get_fake_splitter(single_category=object_type)
+                splitter = cls._get_fake_splitter(single_category=object_type.value)
         return splitter
 
-    def __call__(self, raw_df: pd.DataFrame) -> Iterator[SplitDataFrame]:
-        return self.transform(
-            raw_df,
-            splitter=self.splitter,
-            df_transform_getter=self.df_transform_getter,
-        )
-
     @classmethod
-    def transform(
-        cls,
-        raw_df: pd.DataFrame,
-        splitter: Callable[[pd.DataFrame], Iterable[SplitDataFrame]],
-        df_transform_getter: Callable[[str], Callable[[pd.DataFrame], pd.DataFrame]],
-    ) -> Iterator[SplitDataFrame]:
-        for split_df in splitter(raw_df):
-            transformer = df_transform_getter(split_df.key)
-            transformed = transformer(split_df.data)
-            yield SplitDataFrame(
-                key=split_df.key,
-                data=transformed,
-            )
-
-    @classmethod
-    def get_single_column_splitter(
+    def _get_single_column_splitter(
         cls,
         column_name: str,
     ) -> Callable[[pd.DataFrame], Iterator[SplitDataFrame]]:
@@ -324,12 +303,15 @@ class MultiPandasDataFrameTransformer:
 
             categories = column.unique()
             for category in categories:
-                yield SplitDataFrame(key=category, data=df[column == category])
+                yield SplitDataFrame(
+                    key=category,
+                    data=df[column == category].reset_index(drop=True),
+                )
 
         return splitter
 
     @classmethod
-    def get_substring_splitter(
+    def _get_substring_splitter(
         cls,
         column_name: str,
         categories: Iterable[str],
@@ -339,12 +321,15 @@ class MultiPandasDataFrameTransformer:
 
             for category in categories:
                 selector = column.str.contains(category)
-                yield SplitDataFrame(key=category, data=df[selector])
+                yield SplitDataFrame(
+                    key=category,
+                    data=df[selector].reset_index(drop=True),
+                )
 
         return splitter
 
     @classmethod
-    def get_fake_splitter(
+    def _get_fake_splitter(
         cls,
         single_category: str,
     ) -> Callable[[pd.DataFrame], Iterator[SplitDataFrame]]:
@@ -357,8 +342,15 @@ class MultiPandasDataFrameTransformer:
 class PandasDataFrameTransformer:
     """Convert API objects directly to a dataframe, each field corresponding to a column"""
 
+    def __init__(
+        self,
+        dict_converter: Callable[[Iterable[Dictable]], Iterator[dict[str, Any]]],
+    ) -> None:
+        self.dict_converter = dict_converter
+
     def __call__(self, objects: Iterable[Dictable]) -> pd.DataFrame:
-        raw_table = self.convert_objects_to_df(objects)
+        dictionaries = _DictTransformer()(objects)
+        raw_table = pd.DataFrame(dictionaries)
         logger.info(
             "Pandas dataframe with %s rows and %s columns created."
             % (raw_table.shape[0], raw_table.shape[1])
@@ -366,9 +358,10 @@ class PandasDataFrameTransformer:
         return raw_table
 
     @classmethod
-    def convert_objects_to_df(cls, objects: Iterable[Dictable]) -> pd.DataFrame:
-        dictionaries = _DictTransformer()(objects)
-        return pd.DataFrame(dictionaries)
+    def new(cls) -> Self:
+        return cls(
+            dict_converter=_DictTransformer(),
+        )
 
 
 class PandasDataFrameMetadataTransformer:
@@ -383,33 +376,20 @@ class PandasDataFrameMetadataTransformer:
         self.metadata_converter = metadata_converter
 
     def __call__(self, raw_df: pd.DataFrame) -> pd.DataFrame:
-        return self.transform(
-            raw_df,
-            object_schema=self.object_schema,
-            metadata_converter=self.metadata_converter,
-        )
-
-    @classmethod
-    def transform(
-        cls,
-        raw_df: pd.DataFrame,
-        object_schema: Optional[Mapping[str, Any]],
-        metadata_converter: Optional[Callable[[pd.Series[str]], pd.DataFrame]],
-    ) -> pd.DataFrame:
         df = raw_df.copy()
         metadata = df["metadata"] if "metadata" in df else None
 
-        if object_schema is not None:
+        if self.object_schema is not None:
             new_df = df[[]].copy()
-            for col, dtype in object_schema.items():
+            for col, dtype in self.object_schema.items():
                 new_df[col] = df[col].astype(dtype)
             df = new_df
 
         df = df.rename(columns=lambda x: f"_{x}")
 
-        if metadata_converter is not None:
+        if self.metadata_converter is not None:
             assert metadata is not None
-            long_metadata = metadata_converter(metadata)
+            long_metadata = self.metadata_converter(metadata)
             df = df.join(long_metadata, how="left").reset_index(drop=True)
         return df
 
@@ -448,14 +428,12 @@ class PandasDataFrameMetadataTransformer:
         cell_content: TableCellContentType = TableCellContentType.COMBINED,
         metadata_schema: Optional[Mapping[str, Any]] = None,
         sanitize_column_names: bool = False,
-        order_columns: bool = False,
     ) -> PandasDataFrameMetadataTransformer:
         """Create a transformer to produce long tables"""
         metadata_converter = WideMetadataTransformer.new(
             cell_content=cell_content,
             metadata_schema=metadata_schema,
             sanitize_column_names=sanitize_column_names,
-            order_columns=order_columns,
         )
         object_schema = cls.get_default_obj_schema(object_type)
 
@@ -470,10 +448,10 @@ class WideMetadataTransformer:
 
     def __init__(
         self,
-        metadata_field_parser: Callable[[str], dict[str, Any]],
-        metadata_field_transformer: Callable[[dict[str, Any]], dict[str, Any]],
+        metadata_field_parser: Callable[[str], MetadataModel],
+        metadata_field_transformer: Callable[[MetadataModel], dict[str, Any]],
         metadata_schema: Optional[Mapping[str, Any]],
-        metadata_schema_guesser: Callable[[pd.Series], dict[str, Any]],
+        metadata_schema_guesser: Callable[[Sequence[MetadataModel]], dict[str, Any]],
         column_name_sanitizer: Optional[Callable[[str], str]],
     ) -> None:
         self.metadata_field_parser = metadata_field_parser
@@ -488,56 +466,44 @@ class WideMetadataTransformer:
         cell_content: TableCellContentType,
         metadata_schema: Optional[Mapping[str, Any]],
         sanitize_column_names: bool,
-        order_columns: bool,
     ) -> WideMetadataTransformer:
         column_name_sanitizer = (
             sanitize_name_for_glue if sanitize_column_names else None
         )
+
+        def metadata_schema_guesser(
+            metadata: Sequence[MetadataModel],
+        ) -> dict[str, str]:
+            return cls.guess_schema(
+                parsed_metadata=metadata,
+                metadata_schema_transformer=ParsedMetadataToPandasDtype.new(
+                    cell_content
+                ),
+            )
+
         return cls(
             metadata_field_parser=MetadataParser(),
-            metadata_field_transformer=ParsedMetadataToSimpleDict.new(
-                cell_content,
-                order_fields=order_columns,
-            ),
+            metadata_field_transformer=ParsedMetadataToSimpleDict.new(cell_content),
             metadata_schema=metadata_schema,
-            metadata_schema_guesser=lambda x: cls.guess_schema(
-                cell_content=cell_content,
-                parsed_metadata=x,
-            ),
+            metadata_schema_guesser=metadata_schema_guesser,
             column_name_sanitizer=column_name_sanitizer,
         )
 
     def __call__(self, metadata: pd.Series[str]) -> pd.DataFrame:
-        return self.unroll_metadata_column(
-            metadata,
-            metadata_field_parser=self.metadata_field_parser,
-            metadata_field_transformer=self.metadata_field_transformer,
-            metadata_schema=self.metadata_schema,
-            metadata_schema_guesser=self.metadata_schema_guesser,
-            column_name_sanitizer=self.column_name_sanitizer,
-        )
+        def parse_and_transform(data: str) -> dict[str, Any]:
+            parsed = self.metadata_field_parser(data)
+            return self.metadata_field_transformer(parsed)
 
-    @classmethod
-    def unroll_metadata_column(
-        cls,
-        metadata: pd.Series[str],
-        metadata_field_parser: Callable[[str], dict[str, Any]],
-        metadata_field_transformer: Callable[[dict[str, Any]], dict[str, Any]],
-        metadata_schema: Optional[Mapping[str, Any]],
-        metadata_schema_guesser: Callable[[pd.Series], dict[str, Any]],
-        column_name_sanitizer: Optional[Callable[[str], str]],
-    ) -> pd.DataFrame:
-        parsed_metadata = metadata.apply(metadata_field_parser)
-        extra_fields = parsed_metadata.apply(metadata_field_transformer)
-        df = pd.DataFrame(
-            extra_fields.tolist(),
-            index=extra_fields.index,
-        ).replace("", None)
+        parsed_metadata = [self.metadata_field_parser(_meta) for _meta in metadata]
+        extra_fields = [
+            self.metadata_field_transformer(_meta) for _meta in parsed_metadata
+        ]
+        df = pd.DataFrame(extra_fields).replace("", None)
 
         original_columns = df.columns
 
-        if metadata_schema is None:
-            metadata_schema = metadata_schema_guesser(parsed_metadata)
+        if self.metadata_schema is None:
+            metadata_schema = self.metadata_schema_guesser(parsed_metadata)
             metadata_schema = {col: metadata_schema[col] for col in original_columns}
 
         new_df = df[[]].copy()
@@ -547,20 +513,20 @@ class WideMetadataTransformer:
             else:
                 new_df[col] = float("nan")
 
-        if column_name_sanitizer is not None:
-            new_df = new_df.rename(columns=column_name_sanitizer)
+        if self.column_name_sanitizer is not None:
+            new_df = new_df.rename(columns=self.column_name_sanitizer)
 
         return new_df
 
     @classmethod
     def guess_schema(
         cls,
-        cell_content: TableCellContentType,
-        parsed_metadata: pd.Series[Any],
+        parsed_metadata: Sequence[MetadataModel],
+        metadata_schema_transformer: Callable[[MetadataModel], dict[str, str]],
     ) -> dict[str, Any]:
-        transformer = ParsedMetadataToPandasDtype.new(cell_content)
-        dtypes = parsed_metadata.apply(transformer)
-        dtype_df = pd.DataFrame(dtypes.tolist())
+        """Return the schema of the pandas table based on column mode type"""
+        dtypes = [metadata_schema_transformer(metadata) for metadata in parsed_metadata]
+        dtype_df = pd.DataFrame(dtypes)
 
         most_common_type = {}
         for col in dtype_df.columns:
@@ -575,37 +541,18 @@ class LongMetadataTransformer:
 
     def __init__(
         self,
-        metadata_field_parser: Callable[[str], dict[str, Any]],
-        metadata_field_transformer: Callable[[dict[str, Any]], list[MetadataField]],
+        metadata_field_parser: Callable[[str], MetadataModel],
+        metadata_field_transformer: Callable[[MetadataModel], list[MetadataField]],
     ) -> None:
         self.metadata_field_parser = metadata_field_parser
         self.metadata_field_transformer = metadata_field_transformer
 
     def __call__(self, metadata: pd.Series[str]) -> pd.DataFrame:
-        return self.unroll_metadata_column(
-            metadata,
-            metadata_field_parser=self.metadata_field_parser,
-            metadata_field_transformer=self.metadata_field_transformer,
-        )
+        def parse_and_transform(data: str) -> list[MetadataField]:
+            parsed = self.metadata_field_parser(data)
+            return self.metadata_field_transformer(parsed)
 
-    @classmethod
-    def new(cls) -> LongMetadataTransformer:
-        return cls(
-            metadata_field_parser=MetadataParser(),
-            metadata_field_transformer=ParsedMetadataToMetadataFieldList(),
-        )
-
-    @classmethod
-    def unroll_metadata_column(
-        cls,
-        metadata: pd.Series[str],
-        metadata_field_parser: Callable[[str], dict[str, Any]],
-        metadata_field_transformer: Callable[[dict[str, Any]], list[MetadataField]],
-    ) -> pd.DataFrame:
-        parsed_metadata = metadata.apply(metadata_field_parser)
-        extra_fields = (
-            parsed_metadata.apply(metadata_field_transformer).explode().dropna()
-        )
+        extra_fields = metadata.apply(parse_and_transform).explode().dropna()
         df = (
             pd.DataFrame(
                 extra_fields.tolist(),
@@ -616,6 +563,13 @@ class LongMetadataTransformer:
         )
 
         return df
+
+    @classmethod
+    def new(cls) -> Self:
+        return cls(
+            metadata_field_parser=MetadataParser(),
+            metadata_field_transformer=ParsedMetadataToMetadataFieldList(),
+        )
 
 
 class LazyWideTableUtils:
@@ -638,20 +592,6 @@ class LazyWideTableUtils:
         return header
 
     @classmethod
-    def get_field_to_cell_value_converter(
-        cls,
-        cell_content: TableCellContentType,
-    ) -> Callable[[MetadataField], Any]:
-        field_to_cell_value = ParsedMetadataToSimpleDict.get_cell_content_getter(
-            cell_content
-        )
-
-        def field_to_cell_value_converter(field: MetadataField) -> Any:
-            return cls.sanitize_cell_value(field_to_cell_value(field))
-
-        return field_to_cell_value_converter
-
-    @classmethod
     def sanitize_cell_value(cls, cell_value: Any) -> Any:
         if isinstance(cell_value, str):
             transformed = cell_value.replace("\n", "\\n").replace('"', "")
@@ -665,9 +605,9 @@ class LazyWideTableUtils:
         obj: HasIDAndMetadata,
         object_columns: Sequence[str],
         metadata_columns: Sequence[str],
-        field_to_cell_value: Callable[[MetadataField], Any],
+        metadata_parser: Callable[[Optional[str]], MetadataModel],
+        dict_converter: Callable[[MetadataModel], dict[str, Any]],
         column_name_sanitizer: Optional[Callable[[str], str]],
-        metadata_parser: Callable[[Optional[str]], list[MetadataField]],
     ) -> dict[str, Any]:
         row_data = {}
 
@@ -677,21 +617,14 @@ class LazyWideTableUtils:
         for column in object_columns:
             row_data[f"_{column}"] = getattr(obj, column, None)
 
-        fields = metadata_parser(obj.metadata)
-        field_map = {field.name: field for field in fields}
+        parsed_metadata = metadata_parser(obj.metadata)
+        field_dictionary = dict_converter(parsed_metadata)
+
         for column in metadata_columns:
-            if column in field_map:
-                column_value = field_to_cell_value(field_map[column])
-            else:
-                column_value = None
-            row_data[column_name_sanitizer(column)] = column_value
+            cell_value = cls.sanitize_cell_value(field_dictionary.get(column))
+            row_data[column_name_sanitizer(column)] = cell_value
 
         return row_data
-
-    @classmethod
-    def metadata_parser(cls, metadata: Optional[str]) -> list[MetadataField]:
-        parsed_metadata = MetadataParser()(metadata)
-        return ParsedMetadataToMetadataFieldList()(parsed_metadata)
 
 
 class CSVTransformer:
@@ -701,13 +634,13 @@ class CSVTransformer:
         self,
         object_columns: Sequence[str],
         metadata_columns: Sequence[str],
-        field_to_cell_value: Callable[[MetadataField], Any],
+        metadata_parser: Callable[[Optional[str]], MetadataModel],
+        dict_converter: Callable[[MetadataModel], dict[str, Any]],
         column_name_sanitizer: Optional[Callable[[str], str]],
-        metadata_parser: Callable[[Optional[str]], list[MetadataField]],
     ) -> None:
         self.object_columns = object_columns
         self.metadata_columns = metadata_columns
-        self.field_to_cell_value = field_to_cell_value
+        self.dict_converter = dict_converter
         self.column_name_sanitizer = column_name_sanitizer
         self.metadata_parser = metadata_parser
 
@@ -732,16 +665,12 @@ class CSVTransformer:
         cell_content: TableCellContentType,
         sanitize_columns: bool,
     ) -> CSVTransformer:
-        field_to_cell_value = LazyWideTableUtils.get_field_to_cell_value_converter(
-            cell_content
-        )
-
         return cls(
             object_columns=object_columns,
             metadata_columns=metadata_columns,
-            field_to_cell_value=field_to_cell_value,
+            metadata_parser=MetadataParser(),
+            dict_converter=ParsedMetadataToSimpleDict.new(cell_content),
             column_name_sanitizer=sanitize_name_for_glue if sanitize_columns else None,
-            metadata_parser=LazyWideTableUtils.metadata_parser,
         )
 
     def _transform(
@@ -752,9 +681,9 @@ class CSVTransformer:
             obj=obj,
             object_columns=self.object_columns,
             metadata_columns=self.metadata_columns,
-            field_to_cell_value=self.field_to_cell_value,
-            column_name_sanitizer=self.column_name_sanitizer,
             metadata_parser=self.metadata_parser,
+            dict_converter=self.dict_converter,
+            column_name_sanitizer=self.column_name_sanitizer,
         )
 
 
@@ -763,34 +692,43 @@ class CSVLongMetadataTableTransformer:
 
     SCHEMA: tuple[str, ...] = MetadataField._fields
 
+    def __init__(
+        self,
+        metadata_parser: Callable[[Optional[str]], MetadataModel],
+        metadatafield_transformer: Callable[[MetadataModel], list[MetadataField]],
+        field_sanitizer: Callable[[Any], Any],
+    ) -> None:
+        self.metadata_parser = metadata_parser
+        self.metadatafield_transformer = metadatafield_transformer
+        self.field_sanitizer = field_sanitizer
+
+    @classmethod
+    def new(cls) -> Self:
+        return cls(
+            metadata_parser=MetadataParser(),
+            metadatafield_transformer=ParsedMetadataToMetadataFieldList(),
+            field_sanitizer=LazyWideTableUtils.sanitize_cell_value,
+        )
+
     def __call__(
         self,
         objects: Iterable[HasIDAndMetadata],
     ) -> Iterator[dict[str, Any]]:
         for obj in objects:
-            fields = self.transform(
-                obj,
-                metadata_parser=LazyWideTableUtils.metadata_parser,
-                field_sanitizer=LazyWideTableUtils.sanitize_cell_value,
-            )
+            fields = self._transform(obj)
             for field in fields:
                 yield field
 
     def get_header(self) -> tuple[str, ...]:
         return self.SCHEMA
 
-    @classmethod
-    def transform(
-        cls,
-        obj: HasIDAndMetadata,
-        metadata_parser: Callable[[Optional[str]], list[MetadataField]],
-        field_sanitizer: Callable[[Any], Any],
-    ) -> Iterator[dict[str, Any]]:
-        fields: list[MetadataField] = metadata_parser(obj.metadata)
+    def _transform(self, obj: HasIDAndMetadata) -> Iterator[dict[str, Any]]:
+        """Convert a single API object to a bunch of metadata fields"""
+        fields = self.metadatafield_transformer(self.metadata_parser(obj.metadata))
         for field in fields:
             field_dict = {f"field_{k}": v for k, v in field._asdict().items()}
             field_dict["_id"] = obj.id
-            field_dict["field_value"] = field_sanitizer(field.value)
+            field_dict["field_value"] = self.field_sanitizer(field.value)
             yield field_dict
 
 
@@ -809,7 +747,7 @@ class CSVElabDataTableTransformer:
         self,
         objects: Iterable[Any],
     ) -> Iterable[dict[str, Any]]:
-        return map(self._transform, objects)
+        return map(self.transform, objects)
 
     def get_header(self) -> list[str]:
         if self.column_name_sanitizer:
@@ -828,29 +766,18 @@ class CSVElabDataTableTransformer:
             column_name_sanitizer=sanitize_name_for_glue if sanitize_columns else None,
         )
 
-    def _transform(
+    def transform(
         self,
         obj: Any,
     ) -> dict[str, Any]:
-        return self.transform(
-            obj=obj,
-            columns=self.columns,
-            column_name_sanitizer=self.column_name_sanitizer,
-        )
-
-    @classmethod
-    def transform(
-        cls,
-        obj: Any,
-        columns: Sequence[str],
-        column_name_sanitizer: Optional[Callable[[str], str]],
-    ) -> dict[str, Any]:
         row_data = {}
 
-        for column in columns:
+        for column in self.columns:
             if hasattr(obj, column):
                 renamed_column = (
-                    column_name_sanitizer(column) if column_name_sanitizer else column
+                    self.column_name_sanitizer(column)
+                    if self.column_name_sanitizer
+                    else column
                 )
                 row_data[renamed_column] = getattr(obj, column)
 
@@ -867,13 +794,13 @@ class WideObjectTableData(NamedTuple):
 class ExcelTransformer:
     def __init__(
         self,
-        field_to_cell_value: Callable[[MetadataField], Any],
+        metadata_parser: Callable[[Optional[str]], MetadataModel],
+        dict_converter: Callable[[MetadataModel], dict[str, Any]],
         column_name_sanitizer: Optional[Callable[[str], str]],
-        metadata_parser: Callable[[Optional[str]], list[MetadataField]],
     ) -> None:
-        self.field_to_cell_value = field_to_cell_value
-        self.column_name_sanitizer = column_name_sanitizer
         self.metadata_parser = metadata_parser
+        self.dict_converter = dict_converter
+        self.column_name_sanitizer = column_name_sanitizer
 
     @classmethod
     def new(
@@ -881,14 +808,10 @@ class ExcelTransformer:
         cell_content: TableCellContentType,
         sanitize_columns: bool,
     ) -> ExcelTransformer:
-        field_to_cell_value = LazyWideTableUtils.get_field_to_cell_value_converter(
-            cell_content
-        )
-
         return cls(
-            field_to_cell_value=field_to_cell_value,
+            metadata_parser=MetadataParser(),
+            dict_converter=ParsedMetadataToSimpleDict.new(cell_content),
             column_name_sanitizer=sanitize_name_for_glue if sanitize_columns else None,
-            metadata_parser=LazyWideTableUtils.metadata_parser,
         )
 
     def __call__(
@@ -898,7 +821,8 @@ class ExcelTransformer:
         return map(self.transform_sheet_to_dataframe, sheets)
 
     def transform_sheet_to_dataframe(
-        self, sheet: WideObjectTableData
+        self,
+        sheet: WideObjectTableData,
     ) -> SplitDataFrame:
         header = LazyWideTableUtils.create_header(
             object_columns=sheet.object_columns,
@@ -931,7 +855,7 @@ class ExcelTransformer:
             obj=obj,
             object_columns=object_columns,
             metadata_columns=metadata_columns,
-            field_to_cell_value=self.field_to_cell_value,
-            column_name_sanitizer=self.column_name_sanitizer,
             metadata_parser=self.metadata_parser,
+            dict_converter=self.dict_converter,
+            column_name_sanitizer=self.column_name_sanitizer,
         )
