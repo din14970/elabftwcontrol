@@ -23,6 +23,7 @@ from elabftwcontrol.core.manifests import (
     ItemsTypeSpecManifest,
     ManifestIndex,
     MetadataCheckboxFieldManifest,
+    MetadataCheckboxFieldOptions,
     MetadataDateFieldManifest,
     MetadataDatetimeFieldManifest,
     MetadataEmailFieldManifest,
@@ -73,7 +74,7 @@ from elabftwcontrol.core.manifests import (
             MetadataCheckboxFieldManifest(
                 type="checkbox",
                 name="fieldname",
-                value="on",
+                value=MetadataCheckboxFieldOptions("on"),
             ),
             nullcontext(),
         ),
@@ -83,7 +84,7 @@ from elabftwcontrol.core.manifests import (
             MetadataCheckboxFieldManifest(
                 type="checkbox",
                 name="fieldname",
-                value="off",
+                value=MetadataCheckboxFieldOptions("off"),
             ),
             nullcontext(),
         ),
@@ -529,7 +530,7 @@ def test_meta_field_non_existing_assignment() -> None:
         value="option 1",
     )
     with pytest.raises(AttributeError):
-        field.unit == "not an option"
+        field.unit == "not an option"  # type: ignore
 
 
 def test_group_manifest() -> None:

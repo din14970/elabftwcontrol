@@ -262,7 +262,7 @@ def _convert_to_table(
     cell_content: TableCellContentType = TableCellContentType.VALUE,
     sanitize_column_names: bool = False,
 ) -> pd.DataFrame:
-    raw_table = PandasDataFrameTransformer()(objects)
+    raw_table = PandasDataFrameTransformer.new()(objects)
     if expand_metadata:
         if table_shape == TableShapes.WIDE:
             transformer = PandasDataFrameMetadataTransformer.for_wide_table(
@@ -270,7 +270,6 @@ def _convert_to_table(
                 cell_content=cell_content,
                 metadata_schema=None,
                 sanitize_column_names=sanitize_column_names,
-                order_columns=True,
             )
         else:
             transformer = PandasDataFrameMetadataTransformer.for_long_table(
@@ -574,7 +573,7 @@ class JSONConverter(NamedTuple):
         objects: Iterable[Dictable],
     ) -> Iterator[str]:
         indent = 2 if self.config.indent else None
-        transformer = JSONTransformer(indent=indent)
+        transformer = JSONTransformer.new(indent=indent)
         lines = transformer(objects)
         return lines
 
@@ -582,7 +581,7 @@ class JSONConverter(NamedTuple):
         self,
         lines: Iterable[str],
     ) -> None:
-        outputter = LineWriter.from_output(self.config.output)
+        outputter = LineWriter.new(self.config.output)
         outputter(lines=lines)
 
 
@@ -603,7 +602,7 @@ class SinglePandasTableConverter(NamedTuple):
         self,
         objects: Iterable[Dictable],
     ) -> pd.DataFrame:
-        raw_table = PandasDataFrameTransformer()(objects)
+        raw_table = PandasDataFrameTransformer.new()(objects)
         if not self.config.expand_metadata:
             return raw_table
 
@@ -615,7 +614,6 @@ class SinglePandasTableConverter(NamedTuple):
                 cell_content=self.config.cell_content,
                 metadata_schema=metadata_schema,
                 sanitize_column_names=self.config.sanitize_column_names,
-                order_columns=True,
             )
         else:
             transformer = PandasDataFrameMetadataTransformer.for_long_table(
@@ -667,7 +665,7 @@ class ExcelConverter(NamedTuple):
         self,
         objects: Iterable[Dictable],
     ) -> Iterator[SplitDataFrame]:
-        raw_table = PandasDataFrameTransformer()(objects)
+        raw_table = PandasDataFrameTransformer.new()(objects)
         if not self.config.expand_metadata:
             multi_tables = MultiPandasDataFrameTransformer.for_raw_tables(
                 object_type=self.config.object_type,
@@ -681,7 +679,6 @@ class ExcelConverter(NamedTuple):
                     categories_metadata_schema=categories_metadata_schema,
                     cell_content=self.config.cell_content,
                     sanitize_column_names=self.config.sanitize_column_names,
-                    order_columns=True,
                 )
             else:
                 multi_tables = MultiPandasDataFrameTransformer.for_long_tables(
@@ -694,7 +691,7 @@ class ExcelConverter(NamedTuple):
         self,
         dataframes: Iterable[SplitDataFrame],
     ) -> None:
-        writer = ExcelWriter.from_output(self.config.output)
+        writer = ExcelWriter.new(self.config.output)
         writer(dataframes)
 
     def _get_categories_metadata_schemas(
