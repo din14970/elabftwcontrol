@@ -158,9 +158,16 @@ class SingleFieldModel(BaseModel):
         return int(split[0])
 
 
+class ElabftwControlConfig(BaseModel):
+    template_name: str | None = None
+    name: str | None = None
+    version: str | None = None
+
+
 class MetadataModel(BaseModel):
     elabftw: ConfigMetadata = ConfigMetadata()
     extra_fields: dict[str, SingleFieldModel] = {}
+    elabftwcontrol: ElabftwControlConfig = ElabftwControlConfig()
 
     @property
     def ordered_fieldnames(self) -> list[str]:

@@ -32,7 +32,7 @@ from elabftwcontrol.core.metadata import (
 )
 from elabftwcontrol.core.models import MetadataModel
 from elabftwcontrol.core.parsers import MetadataParser
-from elabftwcontrol.download.utils import do_nothing, sanitize_name_for_glue
+from elabftwcontrol.utils import do_nothing, sanitize_name_for_glue
 
 DEFAULT_ITEM_SCHEMA: Final[dict[str, str]] = {
     "id": "Int64",
