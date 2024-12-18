@@ -30,7 +30,7 @@ from elabftwcontrol.core.metadata import (
     ParsedMetadataToSimpleDict,
     TableCellContentType,
 )
-from elabftwcontrol.core.models import MetadataModel
+from elabftwcontrol.core.models import MetadataModel, ObjectTypes
 from elabftwcontrol.core.parsers import MetadataParser
 from elabftwcontrol.utils import do_nothing, sanitize_name_for_glue
 
@@ -143,13 +143,6 @@ class _JSONStringTransformer:
 class TableShapes(str, Enum):
     WIDE = "wide"
     LONG = "long"
-
-
-class ObjectTypes(str, Enum):
-    ITEM = "item"
-    ITEMS_TYPE = "items_type"
-    EXPERIMENT = "experiment"
-    EXPERIMENTS_TEMPLATE = "experiments_template"
 
 
 @dataclass
@@ -448,7 +441,7 @@ class WideMetadataTransformer:
 
     def __init__(
         self,
-        metadata_field_parser: Callable[[str], MetadataModel],
+        metadata_field_parser: Callable[[str | None], MetadataModel],
         metadata_field_transformer: Callable[[MetadataModel], dict[str, Any]],
         metadata_schema: Optional[Mapping[str, Any]],
         metadata_schema_guesser: Callable[[Sequence[MetadataModel]], dict[str, Any]],
@@ -459,6 +452,31 @@ class WideMetadataTransformer:
         self.metadata_schema = metadata_schema
         self.metadata_schema_guesser = metadata_schema_guesser
         self.column_name_sanitizer = column_name_sanitizer
+
+    def __call__(self, metadata: pd.Series[str]) -> pd.DataFrame:
+        parsed_metadata = [self.metadata_field_parser(_meta) for _meta in metadata]
+        extra_fields = [
+            self.metadata_field_transformer(_meta) for _meta in parsed_metadata
+        ]
+        df = pd.DataFrame(extra_fields).replace("", None)
+
+        original_columns = df.columns
+
+        if self.metadata_schema is None:
+            metadata_schema = self.metadata_schema_guesser(parsed_metadata)
+            metadata_schema = {col: metadata_schema[col] for col in original_columns}
+
+        new_df = df[[]].copy()
+        for col, dtype in metadata_schema.items():
+            if col in df:
+                new_df[col] = df[col].astype(dtype)
+            else:
+                new_df[col] = float("nan")
+
+        if self.column_name_sanitizer is not None:
+            new_df = new_df.rename(columns=self.column_name_sanitizer)
+
+        return new_df
 
     @classmethod
     def new(
@@ -488,35 +506,6 @@ class WideMetadataTransformer:
             metadata_schema_guesser=metadata_schema_guesser,
             column_name_sanitizer=column_name_sanitizer,
         )
-
-    def __call__(self, metadata: pd.Series[str]) -> pd.DataFrame:
-        def parse_and_transform(data: str) -> dict[str, Any]:
-            parsed = self.metadata_field_parser(data)
-            return self.metadata_field_transformer(parsed)
-
-        parsed_metadata = [self.metadata_field_parser(_meta) for _meta in metadata]
-        extra_fields = [
-            self.metadata_field_transformer(_meta) for _meta in parsed_metadata
-        ]
-        df = pd.DataFrame(extra_fields).replace("", None)
-
-        original_columns = df.columns
-
-        if self.metadata_schema is None:
-            metadata_schema = self.metadata_schema_guesser(parsed_metadata)
-            metadata_schema = {col: metadata_schema[col] for col in original_columns}
-
-        new_df = df[[]].copy()
-        for col, dtype in metadata_schema.items():
-            if col in df:
-                new_df[col] = df[col].astype(dtype)
-            else:
-                new_df[col] = float("nan")
-
-        if self.column_name_sanitizer is not None:
-            new_df = new_df.rename(columns=self.column_name_sanitizer)
-
-        return new_df
 
     @classmethod
     def guess_schema(

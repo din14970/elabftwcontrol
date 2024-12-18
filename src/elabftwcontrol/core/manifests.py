@@ -28,10 +28,14 @@ from typing_extensions import Self
 
 from elabftwcontrol.core.models import (
     ConfigMetadata,
+    FieldTypeEnum,
     GroupModel,
     MetadataModel,
+    ObjectTypes,
     SingleFieldModel,
+    ElabftwControlConfig,
 )
+from elabftwcontrol.core.models import NameNode as Node
 from elabftwcontrol.upload.graph import DependencyGraph
 from elabftwcontrol.utils import parse_tag_str
 
@@ -62,13 +66,17 @@ class BaseMetaField(BaseModel):
         model: SingleFieldModel,
     ) -> Self:
         field_data = model.model_dump()
-        field_names = cast(dict[str, Any], cls.__fields__).keys()
-        data = {
+        field_members = cast(dict[str, Any], cls.__fields__).keys()
+        extracted_field_data: dict[str, Any] = {
             "name": name,
             "group": group,
-            **{field_name: field_data[field_name] for field_name in field_names},
         }
-        return cls(**data)
+        for field_member in field_members:
+            if field_member not in extracted_field_data:
+                member_value = field_data.get(field_member)
+                if member_value is not None:
+                    extracted_field_data[field_member] = member_value
+        return cls(**extracted_field_data)
 
     def to_single_field_model(
         self,
@@ -89,7 +97,7 @@ class MetadataCheckboxFieldOptions(str, Enum):
 
 
 class MetadataCheckboxFieldManifest(BaseMetaField):
-    type: Literal["checkbox"] = "checkbox"
+    type: Literal[FieldTypeEnum.checkbox] = FieldTypeEnum.checkbox
     value: MetadataCheckboxFieldOptions = MetadataCheckboxFieldOptions.OFF
 
     def turn_on(self) -> None:
@@ -108,7 +116,7 @@ class MetadataCheckboxFieldManifest(BaseMetaField):
 class MetadataRadioFieldManifest(BaseMetaField):
     options: List[str]
     value: str = ""
-    type: Literal["radio"] = "radio"
+    type: Literal[FieldTypeEnum.radio] = FieldTypeEnum.radio
 
     def model_post_init(self, __context: Any) -> None:
         if not self.value:
@@ -127,7 +135,7 @@ class MetadataRadioFieldManifest(BaseMetaField):
 class MetadataSelectFieldManifest(BaseMetaField):
     options: List[str]
     value: str | List[str] = ""
-    type: Literal["select"] = "select"
+    type: Literal[FieldTypeEnum.select] = FieldTypeEnum.select
     allow_multi_values: Literal[None, False, True] = None
 
     def model_post_init(self, __context: Any) -> None:
@@ -164,12 +172,12 @@ class MetadataSelectFieldManifest(BaseMetaField):
 
 
 class MetadataTextFieldManifest(BaseMetaField):
-    type: Literal["text"] = "text"
+    type: Literal[FieldTypeEnum.text] = FieldTypeEnum.text
     value: str = ""
 
 
 class MetadataNumberFieldManifest(BaseMetaField):
-    type: Literal["number"] = "number"
+    type: Literal[FieldTypeEnum.number] = FieldTypeEnum.number
     value: str = ""
     units: Optional[List[str]] = None
     unit: Optional[str] = None
@@ -203,7 +211,7 @@ class MetadataNumberFieldManifest(BaseMetaField):
 
 
 class MetadataEmailFieldManifest(BaseMetaField):
-    type: Literal["email"] = "email"
+    type: Literal[FieldTypeEnum.email] = FieldTypeEnum.email
     value: str = ""
 
     @model_validator(mode="after")
@@ -218,7 +226,7 @@ class MetadataEmailFieldManifest(BaseMetaField):
 
 
 class MetadataURLFieldManifest(BaseMetaField):
-    type: Literal["url"] = "url"
+    type: Literal[FieldTypeEnum.url] = FieldTypeEnum.url
     value: str = ""
 
     @model_validator(mode="after")
@@ -236,7 +244,7 @@ class MetadataURLFieldManifest(BaseMetaField):
 
 class MetadataDateFieldManifest(BaseMetaField):
     _FMT = "%Y-%m-%d"
-    type: Literal["date"] = "date"
+    type: Literal[FieldTypeEnum.date] = FieldTypeEnum.date
     value: str = ""
 
     @model_validator(mode="after")
@@ -257,7 +265,7 @@ class MetadataDateFieldManifest(BaseMetaField):
 
 class MetadataDatetimeFieldManifest(BaseMetaField):
     _FMT = "%Y-%m-%dT%H:%M"
-    type: Literal["datetime-local"] = "datetime-local"
+    type: Literal[FieldTypeEnum.datetime_local] = FieldTypeEnum.datetime_local
     value: str = ""
 
     @model_validator(mode="after")
@@ -278,7 +286,7 @@ class MetadataDatetimeFieldManifest(BaseMetaField):
 
 class MetadataTimeFieldManifest(BaseMetaField):
     _FMT = "%H:%M"
-    type: Literal["time"] = "time"
+    type: Literal[FieldTypeEnum.time] = FieldTypeEnum.time
     value: str = ""
 
     @model_validator(mode="after")
@@ -298,12 +306,12 @@ class MetadataTimeFieldManifest(BaseMetaField):
 
 
 class MetadataItemsLinkFieldManifest(BaseMetaField):
-    type: Literal["items"] = "items"
+    type: Literal[FieldTypeEnum.items] = FieldTypeEnum.items
     value: str = ""
 
 
 class MetadataExperimentsLinkFieldManifest(BaseMetaField):
-    type: Literal["experiments"] = "experiments"
+    type: Literal[FieldTypeEnum.experiments] = FieldTypeEnum.experiments
     value: str = ""
 
 
@@ -340,9 +348,11 @@ class MetadataGroupManifest(BaseModel):
 
 
 class ExtraFields:
+    """Intermediate representation between manifests and real metadata"""
+
     _link_map = {
-        "items": "item",
-        "experiments": "experiment",
+        FieldTypeEnum.items: ObjectTypes.ITEM,
+        FieldTypeEnum.experiments: ObjectTypes.EXPERIMENT,
     }
 
     def __init__(
@@ -416,7 +426,7 @@ class ExtraFields:
                 dependencies.append(
                     Node(
                         kind=self._link_map[field.type],
-                        id=field.value,
+                        name=field.value,
                     )
                 )
 
@@ -441,8 +451,9 @@ class ExtraFields:
         groups = model.elabftw.extra_fields_groups
         group_map = {group.id: group.name for group in groups}
 
-        field_tuples = []
-        for name, field in model.extra_fields.items():
+        fields = []
+        positions = []
+        for i, (name, field) in enumerate(model.extra_fields.items()):
             if field.group_id:
                 group = group_map.get(field.group_id)
             else:
@@ -456,18 +467,22 @@ class ExtraFields:
                 position = -1
             else:
                 position = field.position
-            field_tuples.append((position, parsed_field))
+            fields.append(parsed_field)
+            positions.append((position, i))
 
         # sort by position
-        field_tuples.sort()
-        fields = [field_tuple[1] for field_tuple in field_tuples]
+        positions.sort()
+        fields = [fields[i] for _, i in positions]
 
         return cls.new(
             config=config,
             fields=fields,
         )
 
-    def to_model(self) -> MetadataModel:
+    def to_model(
+        self,
+        extra_metadata: ElabftwControlConfig | None = None,
+    ) -> MetadataModel:
         """Convert manifest to the expected JSON format in eLabFTW"""
         extra_fields: dict[str, SingleFieldModel] = {}
         extra_fields_groups: list[GroupModel] = []
@@ -492,6 +507,7 @@ class ExtraFields:
         return MetadataModel(
             elabftw=ConfigMetadata(extra_fields_groups=extra_fields_groups),
             extra_fields=extra_fields,
+            elabftwcontrol=extra_metadata,
         )
 
     @classmethod
@@ -619,7 +635,7 @@ class ItemsTypeSpecManifest(BaseElabObjSpecManifest):
 class ItemsTypeManifest(BaseElabObjManifest):
     version: int = 1
     id: str
-    kind: Literal["items_type"] = "items_type"
+    kind: Literal[ObjectTypes.ITEMS_TYPE] = ObjectTypes.ITEMS_TYPE
     spec: ItemsTypeSpecManifest
 
 
@@ -639,7 +655,7 @@ class ExperimentTemplateSpecManifest(BaseElabObjSpecManifest):
 class ExperimentTemplateManifest(BaseElabObjManifest):
     version: int = 1
     id: str
-    kind: Literal["experiments_template"] = "experiments_template"
+    kind: Literal[ObjectTypes.EXPERIMENTS_TEMPLATE] = ObjectTypes.EXPERIMENTS_TEMPLATE
     spec: ExperimentTemplateSpecManifest
 
 
@@ -654,7 +670,7 @@ class ItemSpecManifest(BaseElabObjSpecManifest):
     def get_dependencies(self) -> set[Node]:
         dependencies: set[Node] = set()
 
-        parent_node = Node(kind="items_type", id=self.category)
+        parent_node = Node(kind=ObjectTypes.ITEMS_TYPE, name=self.category)
         dependencies.add(parent_node)
 
         if self.extra_fields is not None:
@@ -694,7 +710,7 @@ class ItemSpecManifestSimplifiedMetadata(BaseElabObjSpecManifest):
 class ItemManifest(BaseElabObjManifest):
     version: int = 1
     id: str
-    kind: Literal["item"] = "item"
+    kind: Literal[ObjectTypes.ITEM] = ObjectTypes.ITEM
     spec: ItemSpecManifest | ItemSpecManifestSimplifiedMetadata
 
     def render_spec(self, parent: ItemsTypeSpecManifest) -> ItemSpecManifest:
@@ -715,7 +731,7 @@ class ExperimentSpecManifest(BaseElabObjSpecManifest):
         dependencies: set[Node] = set()
 
         if self.template is not None:
-            parent = Node(kind="experiments_template", id=self.template)
+            parent = Node(kind=ObjectTypes.EXPERIMENTS_TEMPLATE, name=self.template)
             dependencies.add(parent)
 
         if self.extra_fields is not None:
@@ -754,7 +770,7 @@ class ExperimentSpecManifestSimplifiedMetadata(BaseElabObjSpecManifest):
 class ExperimentManifest(BaseElabObjManifest):
     version: int = 1
     id: str
-    kind: Literal["experiment"] = "experiment"
+    kind: Literal[ObjectTypes.EXPERIMENT] = ObjectTypes.EXPERIMENT
     spec: ExperimentSpecManifest | ExperimentSpecManifestSimplifiedMetadata
 
     def render_spec(
@@ -821,7 +837,7 @@ class ManifestIndex(NamedTuple):
         dependency_graph: DependencyGraph[Node] = DependencyGraph(flexible=False)
 
         for manifest in manifests:
-            new_node = Node(kind=manifest.kind, id=manifest.id)
+            new_node = Node(kind=manifest.kind, name=manifest.id)
             dependency_graph.add_node(new_node)
 
             if isinstance(manifest, ItemsTypeManifest):
@@ -843,14 +859,14 @@ class ManifestIndex(NamedTuple):
 
         for node, items_type in items_types.items():
             items_type_spec = items_type.spec
-            items_types_spec[node.id] = items_type_spec
+            items_types_spec[node.name] = items_type_spec
             cls._add_dependencies_to_graph(node, items_type_spec, dependency_graph)
 
         experiment_templates_spec: dict[str, ExperimentTemplateSpecManifest] = {}
 
         for node, experiment_template in experiment_templates.items():
             experiment_template_spec = experiment_template.spec
-            experiment_templates_spec[node.id] = experiment_template_spec
+            experiment_templates_spec[node.name] = experiment_template_spec
             cls._add_dependencies_to_graph(
                 node, experiment_template_spec, dependency_graph
             )
@@ -860,7 +876,7 @@ class ManifestIndex(NamedTuple):
         for node, item in items.items():
             item_parent = items_types_spec[item.spec.category]
             item_spec = item.render_spec(item_parent)
-            items_spec[node.id] = item_spec
+            items_spec[node.name] = item_spec
             cls._add_dependencies_to_graph(node, item_spec, dependency_graph)
 
         experiments_spec: dict[str, ExperimentSpecManifest] = {}
@@ -872,7 +888,7 @@ class ManifestIndex(NamedTuple):
             else:
                 experiment_parent = experiment_templates_spec[experiment.spec.template]
             experiment_spec = experiment.render_spec(experiment_parent)
-            experiments_spec[node.id] = experiment_spec
+            experiments_spec[node.name] = experiment_spec
             cls._add_dependencies_to_graph(node, experiment_spec, dependency_graph)
 
         return cls(
@@ -892,13 +908,3 @@ class ManifestIndex(NamedTuple):
     ) -> None:
         for dependency in spec.get_dependencies():
             dependency_graph.add_edge(node, dependency)
-
-
-class Node(NamedTuple):
-    """Minimum piece of information to identify a definition"""
-
-    kind: str
-    id: str
-
-
-# field_value = f"{manifest.id} - {parent_title} - {manifest_title}"

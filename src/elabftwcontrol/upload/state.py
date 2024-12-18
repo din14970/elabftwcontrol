@@ -1,170 +1,187 @@
-from __future__ import annotations
+from typing import Callable, Generic, Iterable, Mapping, NamedTuple, TypeVar
 
-import json
-from pathlib import Path
-from typing import (
-    TYPE_CHECKING,
-    Any,
-    Dict,
-    Iterator,
-    Sequence,
-    Set,
-    Tuple,
-    Type,
-    TypeVar,
-    Union,
-    cast,
-)
+from typing_extensions import Self
 
-from pydantic import BaseModel, PrivateAttr
+from elabftwcontrol._logging import logger
+from elabftwcontrol.client import ElabftwApi
+from elabftwcontrol.core.interfaces import HasIDAndMetadata
+from elabftwcontrol.core.models import IdNode, NameNode
+from elabftwcontrol.core.models import ObjectTypes as ElabObjectType
+from elabftwcontrol.core.parsers import MetadataModel, MetadataParser
 
-from elabftwcontrol.client import ObjectSyncer
-from elabftwcontrol.manifests import Node
-from elabftwcontrol.models import (
-    WrappedExperiment,
-    WrappedExperimentTemplate,
-    WrappedItem,
-    WrappedItemType,
-    WrappedLink,
-)
-from elabftwcontrol.types import ElabObj, EntityTypes, HasLabel
-
-Pathlike = Union[Path, str]
+T = TypeVar("T", bound=HasIDAndMetadata)
 
 
-T = TypeVar("T", bound=HasLabel)
-V = TypeVar("V", bound=ElabObj)
-
-
-if TYPE_CHECKING:
-    Obj = ElabObj
-else:
-    Obj = BaseModel
-
-
-_pull_collections: Dict[EntityTypes, Type[ElabObj]] = {
-    "items_types": WrappedItemType,
-    "experiments_templates": WrappedExperimentTemplate,
-    "items": WrappedItem,
-    "experiments": WrappedExperiment,
-}
-
-
-class ElabState(BaseModel):
-    elab_objects: Dict[EntityTypes, Dict[str, Obj]] = {}
-    links: Dict[str, WrappedLink] = {}
-    _label_map: Dict[EntityTypes, Dict[str, int]] = PrivateAttr(default_factory=dict)
-
-    def label_has_id(
+class EnrichedObj(Generic[T]):
+    def __init__(
         self,
-        entity_type: EntityTypes,
-        label: str,
-    ) -> bool:
-        return label in self._label_map[entity_type]
+        type: ElabObjectType,
+        obj: T,
+        metadata: MetadataModel,
+    ) -> None:
+        self.type = type
+        self.obj = obj
+        self.metadata = metadata
 
-    def get_object(self, obj_type: EntityTypes, label: str) -> ElabObj:
-        category: Dict[str, ElabObj] = self.elab_objects[obj_type]
-        return category[label]
+    @property
+    def id(self) -> int:
+        return self.obj.id
 
-    def get_by_node(self, node: Node) -> ElabObj:
-        return self.get_object(
-            obj_type=cast(EntityTypes, node.obj_type),
-            label=node.obj_type,
+    @property
+    def name(self) -> str:
+        elabctl_data = self.metadata.elabftwcontrol
+        if elabctl_data is not None:
+            if self.type.is_template():
+                name = elabctl_data.template_name
+            else:
+                name = elabctl_data.name
+        else:
+            name = None
+
+        return name or self._default_name
+
+    @property
+    def _default_name(self) -> str:
+        return f"{self.type.value}_{self.id}"
+
+
+class State(NamedTuple):
+    """The current state of eLab managed by elabftwcontrol"""
+
+    elab_obj: Mapping[IdNode, EnrichedObj[HasIDAndMetadata]]
+    name_to_id: Mapping[NameNode, IdNode]
+    id_to_name: Mapping[IdNode, NameNode]
+
+    def get_all_of_type(
+        self, obj_type: ElabObjectType
+    ) -> dict[int, EnrichedObj[HasIDAndMetadata]]:
+        return {
+            _id: enriched_obj
+            for (type, _id), enriched_obj in self.elab_obj.items()
+            if type == obj_type
+        }
+
+    def get_by_id(
+        self,
+        obj_type: ElabObjectType,
+        id: int,
+    ) -> EnrichedObj[HasIDAndMetadata]:
+        return self.get_by_id_node(IdNode(obj_type, id))
+
+    def get_by_id_node(
+        self,
+        node: IdNode,
+    ) -> EnrichedObj[HasIDAndMetadata]:
+        return self.elab_obj[node]
+
+    def get_by_name(
+        self,
+        obj_type: ElabObjectType,
+        name: str,
+    ) -> EnrichedObj[HasIDAndMetadata]:
+        return self.get_by_name_node(NameNode(obj_type, name))
+
+    def get_by_name_node(
+        self,
+        node: NameNode,
+    ) -> EnrichedObj[HasIDAndMetadata]:
+        type_and_id = self.name_to_id[node]
+        return self.elab_obj[type_and_id]
+
+    def get_id(self, obj_type: ElabObjectType, name: str) -> int:
+        return self.get_id_from_name_node(NameNode(obj_type, name))
+
+    def get_id_from_name_node(self, node: NameNode) -> int:
+        return self.name_to_id[node].id
+
+    def get_name(self, obj_type: ElabObjectType, id: int) -> str:
+        return self.get_name_from_id_node(IdNode(obj_type, id))
+
+    def get_name_from_id_node(self, node: IdNode) -> str:
+        return self.id_to_name[node].name
+
+    def contains_id(self, obj_type: ElabObjectType, id: int) -> bool:
+        return (obj_type, id) in self.elab_obj
+
+    def contains_id_node(self, node: IdNode) -> bool:
+        return node in self.elab_obj
+
+    def contains_name(self, obj_type: ElabObjectType, name: str) -> bool:
+        return (obj_type, name) in self.name_to_id
+
+    def contains_name_node(self, node: NameNode) -> bool:
+        return node in self.name_to_id
+
+    @classmethod
+    def pull(
+        cls,
+        api: ElabftwApi,
+        skip_untracked: bool = True,
+    ) -> Self:
+        elab_obj = {}
+        meta_parser = MetadataParser()
+        fetch_jobs: list[
+            tuple[ElabObjectType, Callable[[], Iterable[HasIDAndMetadata]]]
+        ] = [
+            (ElabObjectType.EXPERIMENT, api.experiments.iter),
+            (ElabObjectType.ITEM, api.items.iter),
+            (ElabObjectType.ITEMS_TYPE, api.items_types.iter_full),
+            (ElabObjectType.EXPERIMENTS_TEMPLATE, api.experiments_templates.iter),
+        ]
+
+        for obj_type, getter in fetch_jobs:
+            logger.info(f"Pulling {obj_type.value} info...")
+            objs = getter()
+            retrieved_objs = cls._get_objs(
+                objs,
+                obj_type=obj_type,
+                metadata_parser=meta_parser,
+                skip_untracked=skip_untracked,
+            )
+            elab_obj.update(retrieved_objs)
+        logger.info("Done pulling state.")
+
+        name_to_id = {}
+        id_to_name = {}
+        for type_and_id, enriched_obj in elab_obj.items():
+            type_and_name = NameNode(enriched_obj.type, enriched_obj.name)
+            name_to_id[type_and_name] = type_and_id
+            id_to_name[type_and_id] = type_and_name
+
+        return cls(
+            elab_obj=elab_obj,
+            name_to_id=name_to_id,
+            id_to_name=id_to_name,
         )
 
-    def get_nodes(self) -> Set[Node]:
-        """Get all (obj_type, label) combinations in the state"""
-        return set(Node(obj_type, label) for obj_type, label, _ in self._iter_objects())
-
-    def get_id_from_label(
-        self,
-        entity_type: EntityTypes,
-        label: str,
-    ) -> int:
-        return self._label_map[entity_type][label]
-
-    def add_item(
-        self,
-        entity_type: EntityTypes,
-        elab_obj: ElabObj,
-    ) -> None:
-        assert (
-            elab_obj.id is not None
-        ), "Elab object does not have an ID and so can't be part of the state."
-        dictionary = self.elab_objects[entity_type]
-        label = elab_obj._label
-        assert label not in dictionary, f"Label {label} already exists in the state."
-        dictionary[label] = elab_obj
-        self._label_map[entity_type][label] = elab_obj.id
-
-    def modify_item(
-        self,
-        entity_type: EntityTypes,
-        elab_obj: ElabObj,
-    ) -> None:
-        assert (
-            elab_obj.id is not None
-        ), "Elab object does not have an ID and so can't be part of the state."
-        dictionary = self.elab_objects[entity_type]
-        label = elab_obj._label
-        dictionary[label] = elab_obj
-        self._label_map[entity_type][label] = elab_obj.id
-
-    def remove_item(
-        self,
-        entity_type: EntityTypes,
-        label: str,
-    ) -> None:
-        dictionary = self.elab_objects[entity_type]
-        del dictionary[label]
-        del self._label_map[entity_type][label]
-
     @classmethod
-    def from_file(cls, filepath: Pathlike) -> ElabState:
-        with open(filepath, "r") as f:
-            data = json.load(f)
-        return cls._init_obj(data)
-
-    @classmethod
-    def from_remote(
+    def _get_objs(
         cls,
-        syncer: ObjectSyncer,
-    ) -> ElabState:
-        """Create state by pulling the current items eLabFTW"""
-        data: Dict[str, Any] = {}
-        for var_name, obj_type in _pull_collections.items():
-            data[var_name] = cls._list_to_dict(syncer.list_all(obj_type))
-        return cls._init_obj(data)
+        objects: Iterable[T],
+        obj_type: ElabObjectType,
+        metadata_parser: Callable[[str | None], MetadataModel],
+        skip_untracked: bool,
+    ) -> dict[IdNode, EnrichedObj[T]]:
+        tracked_obj = {}
+        for obj in objects:
+            if not obj.metadata and skip_untracked:
+                continue
 
-    @classmethod
-    def _init_obj(cls, data: Dict[str, Any]) -> ElabState:
-        new_obj = cls(**data)
-        new_obj._update_label_map()
-        return new_obj
+            parsed_metadata = metadata_parser(obj.metadata)
+            if parsed_metadata.elabftwcontrol is None and skip_untracked:
+                continue
 
-    @classmethod
-    def _list_to_dict(cls, lst: Sequence[T]) -> Dict[str, T]:
-        return {obj._label: obj for obj in lst}
+            tracked_obj[IdNode(obj_type, obj.id)] = EnrichedObj(
+                type=obj_type,
+                obj=obj,
+                metadata=parsed_metadata,
+            )
+        return tracked_obj
 
-    def _update_label_map(self) -> None:
-        label_map: Dict[EntityTypes, Dict[str, int]] = {}
-        for pull_collection, label, elab_obj in self._iter_objects():
-            if pull_collection not in label_map:
-                label_map[pull_collection] = {}
-            if elab_obj.id is not None:
-                label_map[pull_collection][label] = elab_obj.id
-        self._label_map = label_map
 
-    def _iter_objects(self) -> Iterator[Tuple[EntityTypes, str, ElabObj]]:
-        """Iterate over all regular objects"""
-        for pull_collection in _pull_collections.keys():
-            collection = self.elab_objects.get(pull_collection, {})
-            for label, elab_obj in collection.items():
-                yield pull_collection, label, elab_obj
-
-    def to_string(self) -> str:
-        return self.model_dump_json(indent=2, by_alias=True, exclude_none=True)
-
-    def to_file(self, filepath: Pathlike) -> None:
-        with open(filepath, "w") as f:
-            f.write(self.to_string())
+class StateManager:
+    def __init__(
+        self,
+        state: State,
+    ) -> None:
+        self.state = state

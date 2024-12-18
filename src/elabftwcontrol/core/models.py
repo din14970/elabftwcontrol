@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from enum import Enum
 from pathlib import Path
-from typing import Any, Callable, Optional, TypeVar, Union
+from typing import Any, Callable, Optional, TypeVar, Union, NamedTuple
 
 from pydantic import BaseModel
 
@@ -14,6 +14,33 @@ Pathlike = Union[str, Path]
 
 T = TypeVar("T")
 V = TypeVar("V")
+
+
+class IdNode(NamedTuple):
+    """Minimum piece of information to identify an object"""
+
+    kind: ObjectTypes
+    id: int
+
+
+class NameNode(NamedTuple):
+    """Minimum piece of information to identify a definition"""
+
+    kind: ObjectTypes
+    name: str
+
+
+class ObjectTypes(str, Enum):
+    ITEM = "item"
+    ITEMS_TYPE = "items_type"
+    EXPERIMENT = "experiment"
+    EXPERIMENTS_TEMPLATE = "experiments_template"
+
+    def is_template(self) -> bool:
+        return self == self.ITEMS_TYPE or self == self.EXPERIMENTS_TEMPLATE
+
+    def is_individual(self) -> bool:
+        return self == self.ITEM or self == self.EXPERIMENT
 
 
 class GroupModel(BaseModel):
@@ -167,7 +194,7 @@ class ElabftwControlConfig(BaseModel):
 class MetadataModel(BaseModel):
     elabftw: ConfigMetadata = ConfigMetadata()
     extra_fields: dict[str, SingleFieldModel] = {}
-    elabftwcontrol: ElabftwControlConfig = ElabftwControlConfig()
+    elabftwcontrol: ElabftwControlConfig | None = None
 
     @property
     def ordered_fieldnames(self) -> list[str]:
