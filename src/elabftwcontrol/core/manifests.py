@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
 from datetime import date, datetime, time
 from enum import Enum
 from pathlib import Path
@@ -12,7 +13,7 @@ from typing import (
     Iterator,
     List,
     Literal,
-    NamedTuple,
+    Mapping,
     Optional,
     Protocol,
     Sequence,
@@ -28,14 +29,13 @@ from typing_extensions import Self
 
 from elabftwcontrol.core.models import (
     ConfigMetadata,
+    ElabftwControlConfig,
     FieldTypeEnum,
     GroupModel,
     MetadataModel,
-    ObjectTypes,
-    SingleFieldModel,
-    ElabftwControlConfig,
 )
 from elabftwcontrol.core.models import NameNode as Node
+from elabftwcontrol.core.models import ObjectTypes, SingleFieldModel
 from elabftwcontrol.upload.graph import DependencyGraph
 from elabftwcontrol.utils import parse_tag_str
 
@@ -821,90 +821,51 @@ class _Spec(Protocol):
     def get_dependencies(self) -> set[Node]: ...
 
 
-class ManifestIndex(NamedTuple):
-    items_types: dict[str, ItemsTypeSpecManifest]
-    experiment_templates: dict[str, ExperimentTemplateSpecManifest]
-    items: dict[str, ItemSpecManifest]
-    experiments: dict[str, ExperimentSpecManifest]
+@dataclass(frozen=True)
+class ManifestIndex:
+    specs: Mapping[Node, _Spec]
     dependency_graph: DependencyGraph[Node]
 
     @classmethod
     def from_manifests(cls, manifests: Iterable[ElabObjManifest]) -> ManifestIndex:
-        items_types: dict[Node, ItemsTypeManifest] = {}
-        experiment_templates: dict[Node, ExperimentTemplateManifest] = {}
-        items: dict[Node, ItemManifest] = {}
-        experiments: dict[Node, ExperimentManifest] = {}
+        manifest_dict: dict[Node, ElabObjManifest] = {}
+        specs: dict[Node, _Spec] = {}
         dependency_graph: DependencyGraph[Node] = DependencyGraph(flexible=False)
 
         for manifest in manifests:
             new_node = Node(kind=manifest.kind, name=manifest.id)
+            manifest_dict[new_node] = manifest
             dependency_graph.add_node(new_node)
 
-            if isinstance(manifest, ItemsTypeManifest):
-                items_types[new_node] = manifest
-
-            elif isinstance(manifest, ExperimentTemplateManifest):
-                experiment_templates[new_node] = manifest
-
-            elif isinstance(manifest, ExperimentManifest):
-                experiments[new_node] = manifest
-
+        for node, manifest in manifest_dict.items():
+            spec: _Spec
+            if isinstance(manifest, ItemsTypeManifest) or isinstance(
+                manifest, ExperimentTemplateManifest
+            ):
+                spec = manifest.spec
             elif isinstance(manifest, ItemManifest):
-                items[new_node] = manifest
-
+                item_parent_spec = cast(
+                    ItemsTypeManifest,
+                    manifest_dict[Node(ObjectTypes.ITEMS_TYPE, manifest.spec.category)],
+                ).spec
+                spec = manifest.render_spec(item_parent_spec)
+            elif isinstance(manifest, ExperimentManifest):
+                if manifest.spec.template is None:
+                    experiment_parent_spec = None
+                else:
+                    experiment_parent_spec = cast(
+                        ExperimentTemplateManifest,
+                        manifest_dict[Node(ObjectTypes.EXPERIMENTS_TEMPLATE, manifest.spec.template)],
+                    ).spec
+                spec = manifest.render_spec(experiment_parent_spec)
             else:
-                raise ValueError(f"Type of '{manifest.id}' could not be identified.")
+                raise ValueError
 
-        items_types_spec: dict[str, ItemsTypeSpecManifest] = {}
-
-        for node, items_type in items_types.items():
-            items_type_spec = items_type.spec
-            items_types_spec[node.name] = items_type_spec
-            cls._add_dependencies_to_graph(node, items_type_spec, dependency_graph)
-
-        experiment_templates_spec: dict[str, ExperimentTemplateSpecManifest] = {}
-
-        for node, experiment_template in experiment_templates.items():
-            experiment_template_spec = experiment_template.spec
-            experiment_templates_spec[node.name] = experiment_template_spec
-            cls._add_dependencies_to_graph(
-                node, experiment_template_spec, dependency_graph
-            )
-
-        items_spec: dict[str, ItemSpecManifest] = {}
-
-        for node, item in items.items():
-            item_parent = items_types_spec[item.spec.category]
-            item_spec = item.render_spec(item_parent)
-            items_spec[node.name] = item_spec
-            cls._add_dependencies_to_graph(node, item_spec, dependency_graph)
-
-        experiments_spec: dict[str, ExperimentSpecManifest] = {}
-
-        for node, experiment in experiments.items():
-            experiment_parent: Optional[ExperimentTemplateSpecManifest]
-            if experiment.spec.template is None:
-                experiment_parent = None
-            else:
-                experiment_parent = experiment_templates_spec[experiment.spec.template]
-            experiment_spec = experiment.render_spec(experiment_parent)
-            experiments_spec[node.name] = experiment_spec
-            cls._add_dependencies_to_graph(node, experiment_spec, dependency_graph)
+            specs[node] = spec
+            for dependency in spec.get_dependencies():
+                dependency_graph.add_edge(node, dependency)
 
         return cls(
-            items_types=items_types_spec,
-            experiment_templates=experiment_templates_spec,
-            items=items_spec,
-            experiments=experiments_spec,
+            specs=specs,
             dependency_graph=dependency_graph,
         )
-
-    @classmethod
-    def _add_dependencies_to_graph(
-        cls,
-        node: Node,
-        spec: _Spec,
-        dependency_graph: DependencyGraph[Node],
-    ) -> None:
-        for dependency in spec.get_dependencies():
-            dependency_graph.add_edge(node, dependency)

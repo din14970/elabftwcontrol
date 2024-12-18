@@ -2,46 +2,28 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from pathlib import Path
-from typing import Any, Callable, Iterable, Iterator, Mapping, Type
+from typing import Any, Callable, Iterable, Iterator, Mapping
 
-from elabapi_python import Experiment, ExperimentTemplate, Item, ItemsType
 from pydantic import BaseModel
 from typing_extensions import Self
 
 from elabftwcontrol._logging import logger
 from elabftwcontrol.client import ElabftwApi
-from elabftwcontrol.core.interfaces import Dictable, HasIDAndMetadata
-from elabftwcontrol.core.models import IdNode, NameNode
+from elabftwcontrol.core.interfaces import HasIDAndMetadataAndDictable, Pathlike
+from elabftwcontrol.core.models import (
+    CLASS_TO_OBJTYPE,
+    OBJTYPE_TO_CLASS,
+    IdNode,
+    NameNode,
+)
 from elabftwcontrol.core.models import ObjectTypes as ElabObjectType
 from elabftwcontrol.core.parsers import MetadataModel, MetadataParser
-
-Pathlike = Path | str
-
-
-class HasIDAndMetadataAndDictable(HasIDAndMetadata, Dictable):
-    def __init__(self, *args: Any, **kwargs: Any) -> None: ...
 
 
 @dataclass(frozen=True)
 class TypedObj:
     type: ElabObjectType
     obj: HasIDAndMetadataAndDictable
-
-
-_objtype_to_class: Mapping[ElabObjectType, Type[HasIDAndMetadataAndDictable]] = {
-    ElabObjectType.ITEM: Item,
-    ElabObjectType.EXPERIMENT: Experiment,
-    ElabObjectType.ITEMS_TYPE: ItemsType,
-    ElabObjectType.EXPERIMENTS_TEMPLATE: ExperimentTemplate,
-}
-
-_class_to_objtype: Mapping[Type[HasIDAndMetadataAndDictable], ElabObjectType] = {
-    Item: ElabObjectType.ITEM,
-    Experiment: ElabObjectType.EXPERIMENT,
-    ItemsType: ElabObjectType.ITEMS_TYPE,
-    ExperimentTemplate: ElabObjectType.EXPERIMENTS_TEMPLATE,
-}
 
 
 class SerializedObj(BaseModel):
@@ -108,7 +90,7 @@ class EnrichedObj:
         metadata_parser: Callable[[str | None], MetadataModel],
     ) -> Self:
         obj_type = ElabObjectType(serialized.type)
-        obj_class = _objtype_to_class[obj_type]
+        obj_class = OBJTYPE_TO_CLASS[obj_type]
         obj = obj_class(**serialized.data)
         parsed_metadata = metadata_parser(obj.metadata)
         return cls(
@@ -324,7 +306,7 @@ class State:
         api_objs: Iterable[HasIDAndMetadataAndDictable],
     ) -> Iterator[TypedObj]:
         for api_obj in api_objs:
-            obj_type = _class_to_objtype.get(type(api_obj))
+            obj_type = CLASS_TO_OBJTYPE.get(type(api_obj))
             if obj_type is None:
                 logger.warning("Object %s could not be identified." % api_obj)
                 continue

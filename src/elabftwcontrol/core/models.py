@@ -3,11 +3,13 @@ from __future__ import annotations
 from datetime import datetime
 from enum import Enum
 from pathlib import Path
-from typing import Any, Callable, Optional, TypeVar, Union, NamedTuple
+from typing import Any, Callable, Mapping, NamedTuple, Optional, Type, TypeVar, Union
 
+from elabapi_python import Experiment, ExperimentTemplate, Item, ItemsType
 from pydantic import BaseModel
 
 from elabftwcontrol._logging import logger
+from elabftwcontrol.core.interfaces import HasIDAndMetadataAndDictable
 
 Pathlike = Union[str, Path]
 
@@ -41,6 +43,21 @@ class ObjectTypes(str, Enum):
 
     def is_individual(self) -> bool:
         return self == self.ITEM or self == self.EXPERIMENT
+
+
+OBJTYPE_TO_CLASS: Mapping[ObjectTypes, Type[HasIDAndMetadataAndDictable]] = {
+    ObjectTypes.ITEM: Item,
+    ObjectTypes.EXPERIMENT: Experiment,
+    ObjectTypes.ITEMS_TYPE: ItemsType,
+    ObjectTypes.EXPERIMENTS_TEMPLATE: ExperimentTemplate,
+}
+
+CLASS_TO_OBJTYPE: Mapping[Type[HasIDAndMetadataAndDictable], ObjectTypes] = {
+    Item: ObjectTypes.ITEM,
+    Experiment: ObjectTypes.EXPERIMENT,
+    ItemsType: ObjectTypes.ITEMS_TYPE,
+    ExperimentTemplate: ObjectTypes.EXPERIMENTS_TEMPLATE,
+}
 
 
 class GroupModel(BaseModel):
