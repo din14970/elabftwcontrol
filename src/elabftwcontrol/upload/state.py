@@ -122,75 +122,15 @@ class State:
     """The current state of eLab managed by elabftwcontrol"""
 
     elab_obj: Mapping[IdNode, EnrichedObj]
-    name_to_id: Mapping[NameNode, IdNode]
-    id_to_name: Mapping[IdNode, NameNode]
-    index_to_id: Mapping[int, IdNode]
 
-    def __getitem__(self, index: int) -> EnrichedObj:
-        """Purely for convenience for being able to index into the state as a list"""
-        id_node = self.index_to_id[index]
+    def items(self) -> Iterator[tuple[IdNode, EnrichedObj]]:
+        return iter(self.elab_obj.items())
+
+    def __getitem__(self, id_node: IdNode) -> EnrichedObj:
         return self.elab_obj[id_node]
 
     def __len__(self) -> int:
         return len(self.elab_obj)
-
-    def get_all_of_type(self, obj_type: ElabObjectType) -> dict[int, EnrichedObj]:
-        return {
-            _id: enriched_obj
-            for (type, _id), enriched_obj in self.elab_obj.items()
-            if type == obj_type
-        }
-
-    def get_by_id(
-        self,
-        obj_type: ElabObjectType,
-        id: int,
-    ) -> EnrichedObj:
-        return self.get_by_id_node(IdNode(obj_type, id))
-
-    def get_by_id_node(
-        self,
-        node: IdNode,
-    ) -> EnrichedObj:
-        return self.elab_obj[node]
-
-    def get_by_name(
-        self,
-        obj_type: ElabObjectType,
-        name: str,
-    ) -> EnrichedObj:
-        return self.get_by_name_node(NameNode(obj_type, name))
-
-    def get_by_name_node(
-        self,
-        node: NameNode,
-    ) -> EnrichedObj:
-        type_and_id = self.name_to_id[node]
-        return self.elab_obj[type_and_id]
-
-    def get_id(self, obj_type: ElabObjectType, name: str) -> int:
-        return self.get_id_from_name_node(NameNode(obj_type, name))
-
-    def get_id_from_name_node(self, node: NameNode) -> int:
-        return self.name_to_id[node].id
-
-    def get_name(self, obj_type: ElabObjectType, id: int) -> str:
-        return self.get_name_from_id_node(IdNode(obj_type, id))
-
-    def get_name_from_id_node(self, node: IdNode) -> str:
-        return self.id_to_name[node].name
-
-    def contains_id(self, obj_type: ElabObjectType, id: int) -> bool:
-        return (obj_type, id) in self.elab_obj
-
-    def contains_id_node(self, node: IdNode) -> bool:
-        return node in self.elab_obj
-
-    def contains_name(self, obj_type: ElabObjectType, name: str) -> bool:
-        return (obj_type, name) in self.name_to_id
-
-    def contains_name_node(self, node: NameNode) -> bool:
-        return node in self.name_to_id
 
     @classmethod
     def from_api(
@@ -258,29 +198,7 @@ class State:
             IdNode(enriched_obj.type, enriched_obj.id): enriched_obj
             for enriched_obj in enriched_objs
         }
-        id_to_name, name_to_id, index_to_id = cls._get_reference_mappings(elab_obj)
-
-        return cls(
-            elab_obj=elab_obj,
-            name_to_id=name_to_id,
-            id_to_name=id_to_name,
-            index_to_id=index_to_id,
-        )
-
-    @classmethod
-    def _get_reference_mappings(
-        cls,
-        elab_obj: Mapping[IdNode, EnrichedObj],
-    ) -> tuple[dict[IdNode, NameNode], dict[NameNode, IdNode], dict[int, IdNode]]:
-        name_to_id = {}
-        id_to_name = {}
-        index_to_id = {}
-        for i, (type_and_id, enriched_obj) in enumerate(elab_obj.items()):
-            type_and_name = NameNode(enriched_obj.type, enriched_obj.name)
-            name_to_id[type_and_name] = type_and_id
-            id_to_name[type_and_id] = type_and_name
-            index_to_id[i] = type_and_id
-        return id_to_name, name_to_id, index_to_id
+        return cls(elab_obj=elab_obj)
 
     @classmethod
     def _pull(cls, api: ElabftwApi) -> Iterator[TypedObj]:

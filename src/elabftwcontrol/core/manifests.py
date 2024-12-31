@@ -23,7 +23,6 @@ from typing import (
     get_args,
 )
 
-from elabapi_python import Experiment
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 from typing_extensions import Self
 
@@ -37,7 +36,6 @@ from elabftwcontrol.core.models import (
 from elabftwcontrol.core.models import NameNode as Node
 from elabftwcontrol.core.models import ObjectTypes, SingleFieldModel
 from elabftwcontrol.upload.graph import DependencyGraph
-from elabftwcontrol.utils import parse_tag_str
 
 Pathlike = Union[str, Path]
 
@@ -727,6 +725,13 @@ class ExperimentSpecManifest(BaseElabObjSpecManifest):
     template: Optional[str] = None
     extra_fields: Optional[ExtraFieldsManifest] = None
 
+    def get_parent(self) -> Node | None:
+        if self.template is None:
+            return None
+
+        return Node(kind=ObjectTypes.EXPERIMENTS_TEMPLATE, name=self.template)
+
+
     def get_dependencies(self) -> set[Node]:
         dependencies: set[Node] = set()
 
@@ -784,22 +789,6 @@ class ExperimentManifest(BaseElabObjManifest):
         else:
             return self.spec
 
-    @classmethod
-    def from_api_object(
-        cls,
-        obj: Experiment,
-    ) -> ExperimentManifest:
-        extra_fields_manifest = ExtraFields.from_model(obj.metadata).to_manifest()
-        return cls(
-            id=f"experiment_{obj.id}",
-            spec=ExperimentSpecManifest(
-                title=obj.title,
-                tags=parse_tag_str(obj.tags),
-                body=obj.body,
-                extra_fields=extra_fields_manifest,
-            ),
-        )
-
 
 ElabObjManifest = Annotated[
     Union[
@@ -824,12 +813,25 @@ class _Spec(Protocol):
 @dataclass(frozen=True)
 class ManifestIndex:
     specs: Mapping[Node, _Spec]
+    parents: Mapping[Node, Node]
     dependency_graph: DependencyGraph[Node]
+
+    def get_node_creation_order(self) -> list[Node]:
+        return self.dependency_graph.get_ordered_nodes()
+
+    def get_node_deletion_order(self) -> list[Node]:
+        creation_order = self.dependency_graph.get_ordered_nodes()
+        creation_order.reverse()
+        return creation_order
+
+    def get_node_dependencies(self, node: Node) -> set[Node]:
+        return self.dependency_graph.get_dependencies(node)
 
     @classmethod
     def from_manifests(cls, manifests: Iterable[ElabObjManifest]) -> ManifestIndex:
         manifest_dict: dict[Node, ElabObjManifest] = {}
         specs: dict[Node, _Spec] = {}
+        parents: dict[Node, Node] = {}
         dependency_graph: DependencyGraph[Node] = DependencyGraph(flexible=False)
 
         for manifest in manifests:
@@ -844,20 +846,27 @@ class ManifestIndex:
             ):
                 spec = manifest.spec
             elif isinstance(manifest, ItemManifest):
-                item_parent_spec = cast(
+                parent_node = Node(ObjectTypes.ITEMS_TYPE, manifest.spec.category)
+                item_parent = cast(
                     ItemsTypeManifest,
-                    manifest_dict[Node(ObjectTypes.ITEMS_TYPE, manifest.spec.category)],
-                ).spec
-                spec = manifest.render_spec(item_parent_spec)
+                    manifest_dict[parent_node],
+                )
+                spec = manifest.render_spec(item_parent.spec)
+                parents[node] = parent_node
             elif isinstance(manifest, ExperimentManifest):
                 if manifest.spec.template is None:
-                    experiment_parent_spec = None
+                    spec = manifest.render_spec(None)
                 else:
-                    experiment_parent_spec = cast(
+                    parent_node = Node(
+                        ObjectTypes.EXPERIMENTS_TEMPLATE,
+                        manifest.spec.template,
+                    )
+                    experiment_parent = cast(
                         ExperimentTemplateManifest,
-                        manifest_dict[Node(ObjectTypes.EXPERIMENTS_TEMPLATE, manifest.spec.template)],
-                    ).spec
-                spec = manifest.render_spec(experiment_parent_spec)
+                        manifest_dict[parent_node],
+                    )
+                    parents[node] = parent_node
+                    spec = manifest.render_spec(experiment_parent.spec)
             else:
                 raise ValueError
 
@@ -867,5 +876,6 @@ class ManifestIndex:
 
         return cls(
             specs=specs,
+            parents=parents,
             dependency_graph=dependency_graph,
         )

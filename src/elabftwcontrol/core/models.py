@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any, Callable, Mapping, NamedTuple, Optional, Type, TypeVar, Union
 
 from elabapi_python import Experiment, ExperimentTemplate, Item, ItemsType
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from elabftwcontrol._logging import logger
 from elabftwcontrol.core.interfaces import HasIDAndMetadataAndDictable
@@ -24,12 +24,25 @@ class IdNode(NamedTuple):
     kind: ObjectTypes
     id: int
 
+    def __str__(self) -> str:
+        return f"{self.kind}: {self.id}"
+
 
 class NameNode(NamedTuple):
     """Minimum piece of information to identify a definition"""
 
     kind: ObjectTypes
     name: str
+
+    def __str__(self) -> str:
+        return f"{self.kind}: {self.name}"
+
+
+class Auth(BaseModel):
+    base: int = 30
+    teams: list[int] = Field(default_factory=list)
+    users: list[int] = Field(default_factory=list)
+    teamgroups: list[int] = Field(default_factory=list)
 
 
 class ObjectTypes(str, Enum):

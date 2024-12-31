@@ -1746,8 +1746,8 @@ class TestManifestIndex:
         manifest = ElabObjManifests(manifests=self.parsed_data)
         index = ManifestIndex.from_manifests(manifest.manifests)
         expected = ManifestIndex(
-            items={
-                "item 1": ItemSpecManifest(
+            specs={
+                Node(ObjectTypes.ITEM, "item 1"): ItemSpecManifest(
                     title="test item 1",
                     category="item type 1",
                     extra_fields=ExtraFieldsManifest(
@@ -1767,21 +1767,17 @@ class TestManifestIndex:
                         ]
                     ),
                 ),
-                "item 2": ItemSpecManifest(
+                Node(ObjectTypes.ITEM, "item 2"): ItemSpecManifest(
                     title="test item 2",
                     category="item type 1",
                     extra_fields=None,
                 ),
-            },
-            experiments={
-                "experiment 1": ExperimentSpecManifest(title="test experiment 1"),
-                "experiment 2": ExperimentSpecManifest(
+                Node(ObjectTypes.EXPERIMENT, "experiment 1"): ExperimentSpecManifest(title="test experiment 1"),
+                Node(ObjectTypes.EXPERIMENT, "experiment 2"): ExperimentSpecManifest(
                     title="test experiment 2",
                     template="experiment template 1",
                 ),
-            },
-            items_types={
-                "item type 1": ItemsTypeSpecManifest(
+                Node(ObjectTypes.ITEMS_TYPE, "item type 1"): ItemsTypeSpecManifest(
                     title="test item type",
                     extra_fields=ExtraFieldsManifest(
                         fields=[
@@ -1794,9 +1790,7 @@ class TestManifestIndex:
                         ]
                     ),
                 ),
-            },
-            experiment_templates={
-                "experiment template 1": ExperimentTemplateSpecManifest(
+                Node(ObjectTypes.EXPERIMENTS_TEMPLATE, "experiment template 1"): ExperimentTemplateSpecManifest(
                     title="test experiments template",
                     extra_fields=ExtraFieldsManifest(
                         fields=[
