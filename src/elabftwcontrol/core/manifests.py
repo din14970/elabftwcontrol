@@ -45,6 +45,7 @@ from elabftwcontrol.core.models import (
 from elabftwcontrol.types import EntityTypes
 from elabftwcontrol.upload.diff import Diff
 from elabftwcontrol.upload.graph import DependencyGraph
+# from elabftwcontrol.upload.state import EnrichedObj
 
 Pathlike = Union[str, Path]
 
@@ -730,11 +731,11 @@ class HasTitleAndBody(BaseModel):
     title: str
     body: Optional[str] = None
 
-    def get_base_dict(self) -> dict[str, Any]:
-        return {
-            "title": self.title,
-            "body": self.body,
-        }
+
+# TODO
+# implement HasAuth
+# canread and canwrite: Auth | None
+# For this a mapping between users/teams/groups need to be made as well
 
 
 class HasTags(BaseModel):
@@ -743,14 +744,11 @@ class HasTags(BaseModel):
     def get_tags(self) -> Sequence[str] | None:
         return self.tags
 
-    def add_tags_to_dict(
-        self,
-        dct: dict[str, Any],
-    ) -> None:
+    def render_tags(self) -> str | None:
         if self.tags is not None:
-            dct["tags"] = "|".join(self.tags)
+            return "|".join(self.tags)
         else:
-            dct["tags"] = None
+            return None
 
 
 class HasExtraFields(BaseModel):
@@ -759,23 +757,27 @@ class HasExtraFields(BaseModel):
     def get_extra_fields(self) -> ExtraFieldsManifest | None:
         return self.extra_fields
 
-    def add_metadata_to_dict(
+    def render_metadata(
         self,
-        dct: dict[str, Any],
         id_resolver: IdResolver,
         extra_metadata: ElabftwControlConfig | None,
-    ) -> None:
+    ) -> str:
         extra_fields = self.extra_fields or ExtraFieldsManifest()
-        dct["metadata"] = extra_fields.to_metadata_str(
+        return extra_fields.to_metadata_str(
             id_resolver=id_resolver,
             extra_metadata=extra_metadata,
         )
 
 
 class _ObjStateDataInterface(Protocol):
-    id: int
-    metadata: MetadataModel
-    tag_map: Mapping[str, int]
+    @property
+    def id(self) -> int: ...
+
+    @property
+    def metadata(self) -> MetadataModel: ...
+
+    @property
+    def tag_map(self) -> dict[str, int]: ...
 
     def get_values(self, keys: Iterable[str]) -> dict[str, Any]: ...
 
@@ -834,6 +836,9 @@ class Patch:
         self.diff = diff
         self.extra_metadata = extra_metadata
         self.patch_method = patch_method
+
+    def __bool__(self) -> bool:
+        return bool(self.diff)
 
     def __call__(self, api: ElabftwApi) -> None:
         self.patch_method(self, api)
@@ -940,7 +945,38 @@ class ItemsTypePatchMethod:
         api.items_types.patch(patch.id, patch.get_patch_body())
 
 
-class ItemsTypeSpecManifest(HasTitleAndBody, HasExtraFields):
+class HasTitleBodyAndExtraFields(HasTitleAndBody, HasExtraFields):
+    def to_dict(
+        self,
+        id_resolver: IdResolver,
+        extra_metadata: ElabftwControlConfig | None,
+    ) -> dict[str, Any]:
+        dct = self.model_dump(exclude_none=True)
+        if self.extra_fields is not None:
+            dct["metadata"] = super().render_metadata(
+                id_resolver=id_resolver,
+                extra_metadata=extra_metadata,
+            )
+            del dct["extra_fields"]
+        return dct
+
+
+class HasTitleBodyExtraFieldsAndTags(HasTitleBodyAndExtraFields, HasTags):
+    def to_dict(
+        self,
+        id_resolver: IdResolver,
+        extra_metadata: ElabftwControlConfig | None,
+    ) -> dict[str, Any]:
+        dct = super().to_dict(
+            id_resolver=id_resolver,
+            extra_metadata=extra_metadata,
+        )
+        if self.tags is not None:
+            dct["tags"] = super().render_tags()
+        return dct
+
+
+class ItemsTypeSpecManifest(HasTitleBodyAndExtraFields):
     color: Optional[str] = None
 
     def get_tags(self) -> Collection[str] | None:
@@ -956,28 +992,17 @@ class ItemsTypeSpecManifest(HasTitleAndBody, HasExtraFields):
         self,
         name_node: NameNode,
         state: _StateInterface,
-        extra_metadata: ElabftwControlConfig | None,
+        version: str | None,
     ) -> Patch:
         return Patch.new(
             name_node=name_node,
             state=state,
-            extra_metadata=extra_metadata,
+            extra_metadata=ElabftwControlConfig(
+                template_name=name_node.name,
+                version=version,
+            ),
             patch_method=ItemsTypePatchMethod(),
         )
-
-    def to_dict(
-        self,
-        id_resolver: IdResolver,
-        extra_metadata: ElabftwControlConfig | None,
-    ) -> dict[str, Any]:
-        dct = super().get_base_dict()
-        super().add_metadata_to_dict(
-            dct,
-            id_resolver=id_resolver,
-            extra_metadata=extra_metadata,
-        )
-        dct["color"] = self.color
-        return dct
 
 
 class ItemsTypeManifest(BaseElabObjManifest):
@@ -997,7 +1022,7 @@ class ExperimentTemplatePatchMethod:
         ).apply(api)
 
 
-class ExperimentTemplateSpecManifest(HasTitleAndBody, HasExtraFields, HasTags):
+class ExperimentTemplateSpecManifest(HasTitleBodyExtraFieldsAndTags):
     def get_dependencies(self) -> set[NameNode]:
         if self.extra_fields is None:
             return set()
@@ -1008,28 +1033,17 @@ class ExperimentTemplateSpecManifest(HasTitleAndBody, HasExtraFields, HasTags):
         self,
         name_node: NameNode,
         state: _StateInterface,
-        extra_metadata: ElabftwControlConfig | None,
+        version: str | None,
     ) -> Patch:
         return Patch.new(
             name_node=name_node,
             state=state,
-            extra_metadata=extra_metadata,
+            extra_metadata=ElabftwControlConfig(
+                template_name=name_node.name,
+                version=version,
+            ),
             patch_method=ExperimentTemplatePatchMethod(),
         )
-
-    def to_dict(
-        self,
-        id_resolver: IdResolver,
-        extra_metadata: ElabftwControlConfig | None,
-    ) -> dict[str, Any]:
-        dct = super().get_base_dict()
-        super().add_tags_to_dict(dct)
-        super().add_metadata_to_dict(
-            dct,
-            id_resolver=id_resolver,
-            extra_metadata=extra_metadata,
-        )
-        return dct
 
 
 class ExperimentTemplateManifest(BaseElabObjManifest):
@@ -1049,9 +1063,19 @@ class ItemsPatchMethod:
         ).apply(api)
 
 
-class ItemSpecManifest(HasTitleAndBody, HasTags, HasExtraFields):
+class _ItemSpecificFields(BaseModel):
     category: str
+    rating: int | None = None
+    book_can_overlap: bool | None = None
+    book_cancel_minutes: int | None = None
+    book_is_cancellable: bool | None = None
+    book_max_minutes: int | None = None
+    book_max_slots: int | None = None
+    is_bookable: bool | None = None
+    # TODO: canbook -> Auth
 
+
+class ItemSpecManifest(HasTitleBodyExtraFieldsAndTags, _ItemSpecificFields):
     def get_dependencies(self) -> set[NameNode]:
         dependencies: set[NameNode] = set()
 
@@ -1067,12 +1091,16 @@ class ItemSpecManifest(HasTitleAndBody, HasTags, HasExtraFields):
         self,
         name_node: NameNode,
         state: _StateInterface,
-        extra_metadata: ElabftwControlConfig | None,
+        version: str | None,
     ) -> Patch:
         return Patch.new(
             name_node=name_node,
             state=state,
-            extra_metadata=extra_metadata,
+            extra_metadata=ElabftwControlConfig(
+                template_name=self.category,
+                name=name_node.name,
+                version=version,
+            ),
             patch_method=ItemsPatchMethod(),
         )
 
@@ -1081,19 +1109,15 @@ class ItemSpecManifest(HasTitleAndBody, HasTags, HasExtraFields):
         id_resolver: IdResolver,
         extra_metadata: ElabftwControlConfig | None,
     ) -> dict[str, Any]:
-        dct = super().get_base_dict()
-        super().add_tags_to_dict(dct)
-        super().add_metadata_to_dict(
-            dct,
+        dct = super().to_dict(
             id_resolver=id_resolver,
             extra_metadata=extra_metadata,
         )
+        del dct["category"]
         return dct
 
 
-class ItemSpecManifestSimplifiedMetadata(HasTitleAndBody, HasTags):
-    category: str
-    color: Optional[str] = None
+class ItemSpecManifestSimplifiedMetadata(HasTitleAndBody, HasTags, _ItemSpecificFields):
     extra_fields: SimpleExtraFieldsManifest
 
     def to_full_representation(
@@ -1139,9 +1163,12 @@ class ExperimentPatchMethod:
         ).apply(api)
 
 
-class ExperimentSpecManifest(HasTitleAndBody, HasTags, HasExtraFields):
-    template: Optional[str] = None
+class _ExperimentSpecificFields(BaseModel):
+    template: str | None = None
+    rating: int | None = None
 
+
+class ExperimentSpecManifest(HasTitleBodyExtraFieldsAndTags, _ExperimentSpecificFields):
     def get_parent(self) -> NameNode | None:
         if self.template is None:
             return None
@@ -1164,12 +1191,16 @@ class ExperimentSpecManifest(HasTitleAndBody, HasTags, HasExtraFields):
         self,
         name_node: NameNode,
         state: _StateInterface,
-        extra_metadata: ElabftwControlConfig | None,
+        version: str | None,
     ) -> Patch:
         return Patch.new(
             name_node=name_node,
             state=state,
-            extra_metadata=extra_metadata,
+            extra_metadata=ElabftwControlConfig(
+                template_name=self.template,
+                name=name_node.name,
+                version=version,
+            ),
             patch_method=ExperimentPatchMethod(),
         )
 
@@ -1178,18 +1209,20 @@ class ExperimentSpecManifest(HasTitleAndBody, HasTags, HasExtraFields):
         id_resolver: IdResolver,
         extra_metadata: ElabftwControlConfig | None,
     ) -> dict[str, Any]:
-        dct = super().get_base_dict()
-        super().add_tags_to_dict(dct)
-        super().add_metadata_to_dict(
-            dct,
+        dct = super().to_dict(
             id_resolver=id_resolver,
             extra_metadata=extra_metadata,
         )
+        if "template" in dct:
+            del dct["template"]
         return dct
 
 
-class ExperimentSpecManifestSimplifiedMetadata(HasTitleAndBody, HasTags):
-    template: str
+class ExperimentSpecManifestSimplifiedMetadata(
+    HasTitleAndBody,
+    HasTags,
+    _ExperimentSpecificFields,
+):
     extra_fields: SimpleExtraFieldsManifest
 
     def to_full_representation(
@@ -1255,7 +1288,7 @@ class _Spec(Protocol):
         self,
         name_node: NameNode,
         state: _StateInterface,
-        extra_metadata: ElabftwControlConfig | None,
+        version: str | None,
     ) -> Patch: ...
 
     def to_dict(

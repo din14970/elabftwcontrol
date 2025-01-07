@@ -4,16 +4,15 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Callable, TypeVar
 
-from pydantic import BaseModel, field_serializer
 from typing_extensions import Self
 
 from elabftwcontrol._logging import logger
 from elabftwcontrol.client import ElabftwApi
 from elabftwcontrol.core.manifests import ManifestIndex, Patch, _Spec
-from elabftwcontrol.core.models import Auth, IdNode, MetadataModel, NameNode
+from elabftwcontrol.core.models import IdNode, NameNode
 from elabftwcontrol.types import ElabObjectType
 from elabftwcontrol.upload.diff import Diff
-from elabftwcontrol.upload.state import State, EnrichedObj
+from elabftwcontrol.upload.state import EnrichedObj, State
 
 
 class JobType(Enum):
@@ -23,51 +22,6 @@ class JobType(Enum):
 
 
 T = TypeVar("T")
-
-
-class BasePatchBody(BaseModel):
-    title: str | None = None
-    body: str | None = None
-    canread: Auth | None = None
-    canwrite: Auth | None = None
-    metadata: MetadataModel | None = None
-
-    @field_serializer(
-        "canread",
-        "canwrite",
-        "metadata",
-    )
-    def serialize_dict_fields(
-        self,
-        field: BaseModel | None,
-        _info: Any,
-    ) -> str | None:
-        if field is None:
-            return None
-        return field.model_dump_json(exclude_none=True)
-
-
-class PatchExperimentsTemplateBody(BasePatchBody): ...
-
-
-class PatchItemsTypeBody(BasePatchBody):
-    color: str | None = None
-
-
-class PatchExperimentBody(BasePatchBody):
-    rating: int | None = None
-
-
-class PatchItemBody(BasePatchBody):
-    rating: int | None = None
-    # TODO implement
-    # book_can_overlap
-    # book_cancel_minutes
-    # book_is_cancellable
-    # book_max_minutes
-    # book_max_slots
-    # canbook
-    # is_bookable
 
 
 @dataclass
@@ -149,18 +103,20 @@ class WorkEvaluator:
     """Compares state and manifests and calculates the work plan to be done"""
 
     job_state: WorkEvaluatorState
+    version: str | None
 
     @classmethod
     def new(
         cls,
         manifest_index: ManifestIndex,
         elab_state: State,
+        version: str | None,
     ) -> Self:
         job_state = WorkEvaluatorState.new(
             elab_state=elab_state,
             manifest_index=manifest_index,
         )
-        return cls(job_state)
+        return cls(job_state=job_state, version=version)
 
     @property
     def manifest_index(self) -> ManifestIndex:
@@ -183,13 +139,13 @@ class WorkEvaluator:
                 plan.add_task(new_task)
                 new_task = ElabOperation.new_update_obj(
                     name_node=name_node,
-                    patch=self.get_create_patch(name_node),
+                    patch=self.get_patch(name_node),
                     job_state=self.job_state,
                 )
                 plan.add_task(new_task)
 
             else:
-                patch = self.get_diff_patch(name_node)
+                patch = self.get_patch(name_node)
                 if patch:
                     new_task = ElabOperation.new_update_obj(
                         name_node=name_node,
@@ -200,17 +156,16 @@ class WorkEvaluator:
 
         return plan
 
-    def get_create_patch(self, name_node: NameNode) -> Patch:
+    def get_patch(
+        self,
+        name_node: NameNode,
+    ) -> Patch:
         spec = self.manifest_index[name_node]
-        return spec.to_patch(None)
-
-    def get_diff_patch(self, name_node: NameNode) -> Patch:
-        id_node = self.job_state.get_id(name_node)
-        if id_node is None:
-            raise ValueError(f"No matching id for {name_node} found")
-        spec = self.manifest_index[name_node]
-        state = self.elab_state[id_node]
-        return spec.to_patch(state)
+        return spec.to_patch(
+            name_node=name_node,
+            state=self.job_state,
+            version=self.version,
+        )
 
     def evaluate_destroy(self) -> WorkPlan:
         nodes_to_delete = self.manifest_index.get_node_deletion_order()
@@ -229,14 +184,6 @@ class WorkEvaluator:
                 )
 
         return plan
-
-
-class CreationPatch:
-    pass
-
-
-class UpdatePatch:
-    pass
 
 
 @dataclass
@@ -467,7 +414,7 @@ class UpdateObj:
 
     @property
     def diff(self) -> Diff:
-        return self.patch.get_diff()
+        return self.patch.diff
 
     @property
     def id_node(self) -> IdNode | None:
