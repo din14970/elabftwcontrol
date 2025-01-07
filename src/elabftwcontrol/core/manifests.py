@@ -4,16 +4,20 @@ import re
 from dataclasses import dataclass
 from datetime import date, datetime, time
 from enum import Enum
+from functools import cached_property
 from pathlib import Path
 from typing import (
     Annotated,
     Any,
+    Callable,
+    Collection,
     Dict,
     Iterable,
     Iterator,
     List,
     Literal,
     Mapping,
+    NamedTuple,
     Optional,
     Protocol,
     Sequence,
@@ -26,18 +30,27 @@ from typing import (
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 from typing_extensions import Self
 
+from elabftwcontrol.client import ElabftwApi
 from elabftwcontrol.core.models import (
     ConfigMetadata,
     ElabftwControlConfig,
     FieldTypeEnum,
     GroupModel,
+    IdNode,
     MetadataModel,
+    NameNode,
+    ObjectTypes,
+    SingleFieldModel,
 )
-from elabftwcontrol.core.models import NameNode as Node
-from elabftwcontrol.core.models import ObjectTypes, SingleFieldModel
+from elabftwcontrol.types import EntityTypes
+from elabftwcontrol.upload.diff import Diff
 from elabftwcontrol.upload.graph import DependencyGraph
 
 Pathlike = Union[str, Path]
+
+
+IdResolver = Callable[[NameNode], IdNode | None]
+NameResolver = Callable[[IdNode], NameNode]
 
 
 class MetadataManifestConfig(BaseModel):
@@ -62,8 +75,29 @@ class BaseMetaField(BaseModel):
         name: str,
         group: Optional[str],
         model: SingleFieldModel,
+        name_resolver: NameResolver,
     ) -> Self:
-        field_data = model.model_dump()
+        """Create a field manifest from a SingleFieldModel parsed from real metadata"""
+        extracted_field_data = cls.get_creation_data(
+            name=name,
+            group=group,
+            model=model,
+            name_resolver=name_resolver,
+        )
+        return cls(**extracted_field_data)
+
+    @classmethod
+    def get_creation_data(
+        cls,
+        name: str,
+        group: Optional[str],
+        model: SingleFieldModel,
+        name_resolver: NameResolver,
+    ) -> dict[str, Any]:
+        """The data needed for creating a manifest
+        May need to be overridden by base classes, particularly linked fields
+        """
+        field_data = model.model_dump(exclude_none=True)
         field_members = cast(dict[str, Any], cls.__fields__).keys()
         extracted_field_data: dict[str, Any] = {
             "name": name,
@@ -74,19 +108,37 @@ class BaseMetaField(BaseModel):
                 member_value = field_data.get(field_member)
                 if member_value is not None:
                     extracted_field_data[field_member] = member_value
-        return cls(**extracted_field_data)
+        return extracted_field_data
 
     def to_single_field_model(
         self,
         position: Optional[int],
         group_id: Optional[int],
+        id_resolver: IdResolver,
     ) -> SingleFieldModel:
-        data = self.model_dump()
+        """Convert to a single field model for real metadata"""
+        data = self.get_single_field_data(
+            position=position,
+            group_id=group_id,
+            id_resolver=id_resolver,
+        )
+        return SingleFieldModel(**data)
+
+    def get_single_field_data(
+        self,
+        position: Optional[int],
+        group_id: Optional[int],
+        id_resolver: IdResolver,
+    ) -> dict[str, Any]:
+        """The data needed for creating a SingleFieldModel
+        May need to be overridden by base classes, particularly linked fields
+        """
+        data = self.model_dump(exclude_none=True)
         del data["name"]
         del data["group"]
         data["group_id"] = group_id
         data["position"] = position
-        return SingleFieldModel(**data)
+        return data
 
 
 class MetadataCheckboxFieldOptions(str, Enum):
@@ -303,14 +355,88 @@ class MetadataTimeFieldManifest(BaseMetaField):
         self.value = value.strftime(self._FMT)
 
 
-class MetadataItemsLinkFieldManifest(BaseMetaField):
+class _LinkFieldManifest(BaseMetaField):
+    @classmethod
+    def get_creation_data(
+        cls,
+        name: str,
+        group: Optional[str],
+        model: SingleFieldModel,
+        name_resolver: NameResolver,
+    ) -> dict[str, Any]:
+        """Data needed to convert to create the manifest
+
+        A manifest stores a name-id to another manifest
+        """
+        data = super().get_creation_data(name, group, model, name_resolver)
+        if data["value"]:
+            id_node = cls.get_id_node(data["value"])
+            name_node = name_resolver(id_node)
+            data["value"] = name_node.name
+        return data
+
+    def get_single_field_data(
+        self,
+        position: Optional[int],
+        group_id: Optional[int],
+        id_resolver: IdResolver,
+    ) -> dict[str, Any]:
+        """Data needed to convert to a SingleFieldModel
+
+        A SingleFieldModel stores a real id
+        """
+        data = super().get_single_field_data(position, group_id, id_resolver)
+        if data["value"]:
+            name_node = self.to_name_node()
+            id_node = id_resolver(name_node)
+            if id_node is None:
+                data["value"] = "Unknown"
+            else:
+                data["value"] = id_node.id
+        return data
+
+    def to_name_node(self) -> NameNode:
+        raise NotImplementedError
+
+    @classmethod
+    def get_id_node(cls, id: int) -> IdNode:
+        raise NotImplementedError
+
+
+class MetadataItemsLinkFieldManifest(_LinkFieldManifest):
     type: Literal[FieldTypeEnum.items] = FieldTypeEnum.items
     value: str = ""
 
+    def to_name_node(self) -> NameNode:
+        return NameNode(
+            kind=ObjectTypes.ITEM,
+            name=self.value,
+        )
 
-class MetadataExperimentsLinkFieldManifest(BaseMetaField):
+    @classmethod
+    def get_id_node(cls, id: int) -> IdNode:
+        return IdNode(
+            kind=ObjectTypes.ITEM,
+            id=id,
+        )
+
+
+class MetadataExperimentsLinkFieldManifest(_LinkFieldManifest):
     type: Literal[FieldTypeEnum.experiments] = FieldTypeEnum.experiments
     value: str = ""
+
+    def to_name_node(self) -> NameNode:
+        return NameNode(
+            kind=ObjectTypes.EXPERIMENT,
+            name=self.value,
+        )
+
+    @classmethod
+    def get_id_node(cls, id: int) -> IdNode:
+        return IdNode(
+            kind=ObjectTypes.EXPERIMENT,
+            id=id,
+        )
 
 
 _MetadataFieldType = Union[
@@ -338,6 +464,8 @@ _metadata_field_name_to_manifest_map: dict[str, Type[_MetadataFieldType]] = {
     for field_type in get_args(_MetadataFieldType)
 }
 
+LinkedField = MetadataItemsLinkFieldManifest | MetadataExperimentsLinkFieldManifest
+
 
 class MetadataGroupManifest(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -345,100 +473,52 @@ class MetadataGroupManifest(BaseModel):
     sub_fields: List[MetadataFieldManifest]
 
 
-class ExtraFields:
-    """Intermediate representation between manifests and real metadata"""
+class ExtraFieldsManifest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    config: MetadataManifestConfig = MetadataManifestConfig()
+    fields: Sequence[MetadataFieldManifest] = []
 
-    _link_map = {
-        FieldTypeEnum.items: ObjectTypes.ITEM,
-        FieldTypeEnum.experiments: ObjectTypes.EXPERIMENT,
-    }
-
-    def __init__(
-        self,
-        config: MetadataManifestConfig,
-        field_map: dict[str, MetadataFieldManifest],
-    ) -> None:
-        self.config = config
-        self.field_map = field_map
-
-    @classmethod
-    def new(
-        cls,
-        config: MetadataManifestConfig,
-        fields: Sequence[MetadataFieldManifest],
-    ) -> Self:
-        field_map = cls.get_field_map(fields)
-        return cls(
-            config=config,
-            field_map=field_map,
-        )
-
-    @property
-    def field_names(self) -> list[str]:
-        return list(self.field_map.keys())
-
-    @property
-    def fields(self) -> Iterator[MetadataFieldManifest]:
-        for field in self.field_map.values():
-            yield field
-
-    def __getitem__(self, field_name: str) -> MetadataFieldManifest:
-        return self.field_map[field_name]
-
-    def __contains__(self, field_name: str) -> bool:
-        return field_name in self.field_map
-
-    @classmethod
-    def get_field_map(
-        cls,
-        fields: Sequence[MetadataFieldManifest],
-    ) -> dict[str, MetadataFieldManifest]:
+    @cached_property
+    def field_map(self) -> dict[str, MetadataFieldManifest]:
         field_map = {}
-        for field in fields:
+        for field in self.fields:
             if field.name in field_map:
                 raise ValueError(f"Field name '{field.name}' is duplicated!")
             field_map[field.name] = field
         return field_map
 
-    def iter_linkable(
+    def to_full_representation(self) -> ExtraFieldsManifest:
+        return self
+
+    def to_metadata_str(
         self,
-    ) -> Iterator[
-        MetadataItemsLinkFieldManifest | MetadataExperimentsLinkFieldManifest
-    ]:
-        """Iterate only over linkable fields"""
-        for field in self.fields:
-            if isinstance(
-                field,
-                MetadataExperimentsLinkFieldManifest,
-            ) or isinstance(
-                field,
-                MetadataItemsLinkFieldManifest,
-            ):
-                yield field
+        id_resolver: IdResolver,
+        extra_metadata: ElabftwControlConfig | None,
+    ) -> str:
+        """Final render of what goes into a metadata field
 
-    def get_dependencies(self) -> set[Node]:
-        """Get items and experiments that depend on this metadata"""
-        dependencies: List[Node] = []
-        for field in self.iter_linkable():
-            if field.value:
-                dependencies.append(
-                    Node(
-                        kind=self._link_map[field.type],
-                        name=field.value,
-                    )
-                )
-
-        return set(dependencies)
+        Parameters
+        ----------
+        extra_metadata
+            The metadata injected by elabftwcontrol to determine the link to the
+            manifest definitions
+        id_resolver
+            Mechanism for converting manifest names to real Ids
+        """
+        model = self.to_model(extra_metadata=extra_metadata, id_resolver=id_resolver)
+        return model.model_dump_json(exclude_none=True)
 
     @classmethod
-    def parse(cls, **kwargs: Any) -> Self:
-        """Shortcut for directly creating ExtraFields from dictionary data"""
-        parsed = ExtraFieldsManifest(**kwargs)
-        return cls.from_manifest(parsed)
+    def from_model(
+        cls,
+        model: MetadataModel,
+        name_resolver: NameResolver,
+    ) -> Self:
+        """Convert a parsed metadata JSON to a manifest
 
-    @classmethod
-    def from_model(cls, model: MetadataModel) -> Self:
-        """Convert a parsed metadata JSON to this intermediate representation"""
+        Model metadata contain numeric links to other items.
+        The name resolver converts these to names of other manifests.
+        """
         if model.elabftw.display_main_text is not None:
             config = MetadataManifestConfig(
                 display_main_text=model.elabftw.display_main_text,
@@ -460,6 +540,7 @@ class ExtraFields:
                 name=name,
                 group=group,
                 field=field,
+                name_resolver=name_resolver,
             )
             if field.position is None:
                 position = -1
@@ -472,16 +553,30 @@ class ExtraFields:
         positions.sort()
         fields = [fields[i] for _, i in positions]
 
-        return cls.new(
+        return cls(
             config=config,
             fields=fields,
         )
 
+    def to_field_dict(
+        self,
+        id_resolver: IdResolver,
+    ) -> dict[str, dict[str, Any]]:
+        """Convert manifest to nested dictionary for Diff"""
+        model = self.to_model(id_resolver=id_resolver, extra_metadata=None)
+        return model.field_dict
+
     def to_model(
         self,
-        extra_metadata: ElabftwControlConfig | None = None,
+        id_resolver: IdResolver,
+        extra_metadata: ElabftwControlConfig | None,
     ) -> MetadataModel:
-        """Convert manifest to the expected JSON format in eLabFTW"""
+        """Convert manifest to the expected JSON format in eLabFTW
+
+        Some fields link to another entity. For this purpose, you must pass
+        an IdResolver, which converts names of other manifests to ids of
+        existing items.
+        """
         extra_fields: dict[str, SingleFieldModel] = {}
         extra_fields_groups: list[GroupModel] = []
 
@@ -499,7 +594,11 @@ class ExtraFields:
                     n_group += 1
                 group_id = group_map[group]
 
-            new_field = field.to_single_field_model(position=i, group_id=group_id)
+            new_field = field.to_single_field_model(
+                position=i,
+                group_id=group_id,
+                id_resolver=id_resolver,
+            )
             extra_fields[field_name] = new_field
 
         return MetadataModel(
@@ -514,6 +613,7 @@ class ExtraFields:
         name: str,
         group: Optional[str],
         field: SingleFieldModel,
+        name_resolver: NameResolver,
     ) -> _MetadataFieldType:
         field_type = field.type or "text"
         manifest_type = _metadata_field_name_to_manifest_map[field_type]
@@ -521,13 +621,40 @@ class ExtraFields:
             name=name,
             group=group,
             model=field,
+            name_resolver=name_resolver,
         )
 
-    @classmethod
-    def from_manifest(cls, manifest: ExtraFieldsManifest) -> Self:
+    def get_dependencies(self) -> set[NameNode]:
+        """Get items and experiments that depend on this metadata"""
+        dependencies: List[NameNode] = []
+        for field in self._iter_linkable():
+            if field.value:
+                dependencies.append(field.to_name_node())
+
+        return set(dependencies)
+
+    def _iter_linkable(self) -> Iterator[LinkedField]:
+        """Iterate only over linkable fields"""
+        for field in self.fields:
+            if isinstance(
+                field,
+                MetadataExperimentsLinkFieldManifest,
+            ) or isinstance(
+                field,
+                MetadataItemsLinkFieldManifest,
+            ):
+                yield field
+
+
+class ExtraFieldsManifestComplex(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    config: MetadataManifestConfig = MetadataManifestConfig()
+    fields: Sequence[Union[MetadataFieldManifest, MetadataGroupManifest]] = []
+
+    def to_full_representation(self) -> ExtraFieldsManifest:
         expanded_fields: list[MetadataFieldManifest] = []
 
-        for data in manifest.fields:
+        for data in self.fields:
             if isinstance(data, MetadataGroupManifest):
                 for subfield in data.sub_fields:
                     if subfield.group is not None and subfield.group != data.group_name:
@@ -544,28 +671,10 @@ class ExtraFields:
                 field_copy = data.model_copy(deep=True)
                 expanded_fields.append(field_copy)
 
-        return cls.new(
-            config=manifest.config.model_copy(),
+        return ExtraFieldsManifest(
+            config=self.config.model_copy(),
             fields=expanded_fields,
         )
-
-    def to_manifest(self) -> ExtraFieldsManifest:
-        return ExtraFieldsManifest(
-            config=self.config,
-            fields=list(self.fields),
-        )
-
-
-class ExtraFieldsManifest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    config: MetadataManifestConfig = MetadataManifestConfig()
-    fields: Sequence[Union[MetadataFieldManifest, MetadataGroupManifest]] = []
-
-    def to_full_representation(self) -> ExtraFields:
-        return ExtraFields.from_manifest(self)
-
-    def get_dependencies(self) -> set[Node]:
-        return self.to_full_representation().get_dependencies()
 
 
 class _ValueAndUnit(BaseModel):
@@ -582,7 +691,7 @@ class SimpleExtraFieldsManifest(BaseModel):
 
     def to_full_representation(
         self,
-        parent_extra_fields: ExtraFieldsManifest,
+        parent_extra_fields: ExtraFieldsManifest | ExtraFieldsManifestComplex,
     ) -> ExtraFieldsManifest:
         extra_fields = parent_extra_fields.to_full_representation()
 
@@ -590,7 +699,7 @@ class SimpleExtraFieldsManifest(BaseModel):
             extra_fields.config = self.config
 
         for field_name, field_value in self.field_values.items():
-            if field_name not in extra_fields:
+            if field_name not in extra_fields.field_map:
                 raise ValueError(f"Field '{field_name}' not in parent metadata.")
 
             if isinstance(field_value, _ValueAndUnit):
@@ -600,75 +709,353 @@ class SimpleExtraFieldsManifest(BaseModel):
                 value = field_value
                 unit = None
 
-            field = extra_fields[field_name]
+            field = extra_fields.field_map[field_name]
             field.value = value
             if unit is not None and isinstance(field, MetadataNumberFieldManifest):
                 field.unit = unit
 
-        return extra_fields.to_manifest()
+        return extra_fields
 
 
 class BaseElabObjManifest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
+    version: int = 1
+    id: str
 
-class BaseElabObjSpecManifest(BaseModel):
+
+class HasTitleAndBody(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-
-class ItemsTypeSpecManifest(BaseElabObjSpecManifest):
     title: str
-    tags: Optional[Sequence[str]] = None
     body: Optional[str] = None
-    color: Optional[str] = None
+
+    def get_base_dict(self) -> dict[str, Any]:
+        return {
+            "title": self.title,
+            "body": self.body,
+        }
+
+
+class HasTags(BaseModel):
+    tags: Optional[Sequence[str]] = None
+
+    def get_tags(self) -> Sequence[str] | None:
+        return self.tags
+
+    def add_tags_to_dict(
+        self,
+        dct: dict[str, Any],
+    ) -> None:
+        if self.tags is not None:
+            dct["tags"] = "|".join(self.tags)
+        else:
+            dct["tags"] = None
+
+
+class HasExtraFields(BaseModel):
     extra_fields: Optional[ExtraFieldsManifest] = None
 
-    def get_dependencies(self) -> set[Node]:
+    def get_extra_fields(self) -> ExtraFieldsManifest | None:
+        return self.extra_fields
+
+    def add_metadata_to_dict(
+        self,
+        dct: dict[str, Any],
+        id_resolver: IdResolver,
+        extra_metadata: ElabftwControlConfig | None,
+    ) -> None:
+        extra_fields = self.extra_fields or ExtraFieldsManifest()
+        dct["metadata"] = extra_fields.to_metadata_str(
+            id_resolver=id_resolver,
+            extra_metadata=extra_metadata,
+        )
+
+
+class _ObjStateDataInterface(Protocol):
+    id: int
+    metadata: MetadataModel
+    tag_map: Mapping[str, int]
+
+    def get_values(self, keys: Iterable[str]) -> dict[str, Any]: ...
+
+
+class _StateInterface(Protocol):
+    def get_id(self, node: NameNode) -> IdNode | None: ...
+
+    def get_name(self, node: IdNode) -> NameNode | None: ...
+
+    def get_state_obj(self, node: IdNode) -> _ObjStateDataInterface: ...
+
+    def get_manifest(self, node: NameNode) -> _Spec: ...
+
+
+class TagPatch(NamedTuple):
+    entity_type: EntityTypes
+    id: int
+    to_delete: Mapping[str, int]
+    to_add: Collection[str]
+
+    @classmethod
+    def new(
+        cls,
+        entity_type: EntityTypes,
+        id: int,
+        old: Mapping[str, int],
+        new: Collection[str],
+    ) -> Self:
+        old_s = set(old.keys())
+        new_s = set(new)
+        return cls(
+            entity_type=entity_type,
+            id=id,
+            to_delete={tag: old[tag] for tag in old_s - new_s},
+            to_add=new_s - old_s,
+        )
+
+    def apply(self, api: ElabftwApi) -> None:
+        for tag in self.to_add:
+            api.tags.create(self.entity_type, self.id, tag)
+        for tag_id in self.to_delete.values():
+            api.tags.delete(self.entity_type, self.id, tag_id)
+
+
+class Patch:
+    def __init__(
+        self,
+        name_node: NameNode,
+        state: _StateInterface,
+        diff: Diff,
+        extra_metadata: ElabftwControlConfig | None,
+        patch_method: Callable[[Patch, ElabftwApi], None],
+    ) -> None:
+        self.name_node = name_node
+        self.state = state
+        self.diff = diff
+        self.extra_metadata = extra_metadata
+        self.patch_method = patch_method
+
+    def __call__(self, api: ElabftwApi) -> None:
+        self.patch_method(self, api)
+
+    @property
+    def spec(self) -> _Spec:
+        return self.state.get_manifest(self.name_node)
+
+    @property
+    def state_obj(self) -> _ObjStateDataInterface:
+        return self.state.get_state_obj(self.id_node)
+
+    @property
+    def id_node(self) -> IdNode:
+        id_node = self.state.get_id(self.name_node)
+        if id_node is None:
+            raise ValueError(f"Object {self.name_node} does not exist, can not get id.")
+        return id_node
+
+    @property
+    def id(self) -> int:
+        return self.id_node.id
+
+    def get_patch_body(self) -> dict[str, Any]:
+        """The `body` that is passed to the respective patch function"""
+
+        def strict_id_resolver(name_node: NameNode) -> IdNode:
+            id_node = self.state.get_id(name_node)
+            if id_node is None:
+                raise ValueError(
+                    f"Could not resolve {name_node} as a link: id not found"
+                )
+            return id_node
+
+        body = self.spec.to_dict(
+            id_resolver=strict_id_resolver,
+            extra_metadata=self.extra_metadata,
+        )
+
+        # these can not be part of the patch body and must be removed
+        exclude = ("tags",)
+        for key in exclude:
+            if key in body:
+                del body[key]
+
+        return body
+
+    @classmethod
+    def new(
+        cls,
+        name_node: NameNode,
+        state: _StateInterface,
+        extra_metadata: ElabftwControlConfig | None,
+        patch_method: Callable[[Patch, ElabftwApi], None],
+    ) -> Self:
+        spec = state.get_manifest(name_node)
+
+        def lax_id_resolver(name_node: NameNode) -> IdNode | None:
+            return state.get_id(name_node)
+
+        new_dict = spec.to_dict(
+            id_resolver=lax_id_resolver,
+            extra_metadata=None,
+        )
+        # metadata is considered separately
+        if "metadata" in new_dict:
+            del new_dict["metadata"]
+
+        extra_fields = spec.get_extra_fields()
+        if extra_fields is None:
+            new_metadata_fields = {}
+        else:
+            new_metadata_fields = extra_fields.to_field_dict(lax_id_resolver)
+
+        id_node = state.get_id(name_node)
+        if id_node is None:
+            old_dict = {}
+            old_metadata_fields = {}
+        else:
+            state_obj = state.get_state_obj(id_node)
+            old_dict = state_obj.get_values(new_dict.keys())
+            old_metadata_fields = state_obj.metadata.field_dict
+
+        if "metadata" in old_dict:
+            del old_dict["metadata"]
+
+        diff = Diff.new(
+            old=old_dict,
+            new=new_dict,
+            old_metadata_fields=old_metadata_fields,
+            new_metadata_fields=new_metadata_fields,
+        )
+        return cls(
+            name_node=name_node,
+            state=state,
+            diff=diff,
+            extra_metadata=extra_metadata,
+            patch_method=patch_method,
+        )
+
+
+class ItemsTypePatchMethod:
+    def __call__(self, patch: Patch, api: ElabftwApi) -> None:
+        api.items_types.patch(patch.id, patch.get_patch_body())
+
+
+class ItemsTypeSpecManifest(HasTitleAndBody, HasExtraFields):
+    color: Optional[str] = None
+
+    def get_tags(self) -> Collection[str] | None:
+        return None
+
+    def get_dependencies(self) -> set[NameNode]:
         if self.extra_fields is None:
             return set()
         else:
             return self.extra_fields.get_dependencies()
 
+    def to_patch(
+        self,
+        name_node: NameNode,
+        state: _StateInterface,
+        extra_metadata: ElabftwControlConfig | None,
+    ) -> Patch:
+        return Patch.new(
+            name_node=name_node,
+            state=state,
+            extra_metadata=extra_metadata,
+            patch_method=ItemsTypePatchMethod(),
+        )
+
+    def to_dict(
+        self,
+        id_resolver: IdResolver,
+        extra_metadata: ElabftwControlConfig | None,
+    ) -> dict[str, Any]:
+        dct = super().get_base_dict()
+        super().add_metadata_to_dict(
+            dct,
+            id_resolver=id_resolver,
+            extra_metadata=extra_metadata,
+        )
+        dct["color"] = self.color
+        return dct
+
 
 class ItemsTypeManifest(BaseElabObjManifest):
-    version: int = 1
-    id: str
     kind: Literal[ObjectTypes.ITEMS_TYPE] = ObjectTypes.ITEMS_TYPE
     spec: ItemsTypeSpecManifest
 
 
-class ExperimentTemplateSpecManifest(BaseElabObjSpecManifest):
-    title: str
-    tags: Optional[Sequence[str]] = None
-    body: Optional[str] = None
-    extra_fields: Optional[ExtraFieldsManifest] = None
+class ExperimentTemplatePatchMethod:
+    def __call__(self, patch: Patch, api: ElabftwApi) -> None:
+        api.experiments_templates.patch(patch.id, patch.get_patch_body())
+        new_tags = patch.spec.get_tags() or []
+        TagPatch.new(
+            entity_type=EntityTypes.EXPERIMENTS_TEMPLATE,
+            id=patch.id,
+            old=patch.state_obj.tag_map,
+            new=new_tags,
+        ).apply(api)
 
-    def get_dependencies(self) -> set[Node]:
+
+class ExperimentTemplateSpecManifest(HasTitleAndBody, HasExtraFields, HasTags):
+    def get_dependencies(self) -> set[NameNode]:
         if self.extra_fields is None:
             return set()
         else:
             return self.extra_fields.get_dependencies()
 
+    def to_patch(
+        self,
+        name_node: NameNode,
+        state: _StateInterface,
+        extra_metadata: ElabftwControlConfig | None,
+    ) -> Patch:
+        return Patch.new(
+            name_node=name_node,
+            state=state,
+            extra_metadata=extra_metadata,
+            patch_method=ExperimentTemplatePatchMethod(),
+        )
+
+    def to_dict(
+        self,
+        id_resolver: IdResolver,
+        extra_metadata: ElabftwControlConfig | None,
+    ) -> dict[str, Any]:
+        dct = super().get_base_dict()
+        super().add_tags_to_dict(dct)
+        super().add_metadata_to_dict(
+            dct,
+            id_resolver=id_resolver,
+            extra_metadata=extra_metadata,
+        )
+        return dct
+
 
 class ExperimentTemplateManifest(BaseElabObjManifest):
-    version: int = 1
-    id: str
     kind: Literal[ObjectTypes.EXPERIMENTS_TEMPLATE] = ObjectTypes.EXPERIMENTS_TEMPLATE
     spec: ExperimentTemplateSpecManifest
 
 
-class ItemSpecManifest(BaseElabObjSpecManifest):
-    title: str
-    tags: Optional[Sequence[str]] = None
-    body: Optional[str] = None
+class ItemsPatchMethod:
+    def __call__(self, patch: Patch, api: ElabftwApi) -> None:
+        api.items.patch(patch.id, patch.get_patch_body())
+        new_tags = patch.spec.get_tags() or []
+        TagPatch.new(
+            entity_type=EntityTypes.ITEM,
+            id=patch.id,
+            old=patch.state_obj.tag_map,
+            new=new_tags,
+        ).apply(api)
+
+
+class ItemSpecManifest(HasTitleAndBody, HasTags, HasExtraFields):
     category: str
-    color: Optional[str] = None
-    extra_fields: Optional[ExtraFieldsManifest] = None
 
-    def get_dependencies(self) -> set[Node]:
-        dependencies: set[Node] = set()
+    def get_dependencies(self) -> set[NameNode]:
+        dependencies: set[NameNode] = set()
 
-        parent_node = Node(kind=ObjectTypes.ITEMS_TYPE, name=self.category)
+        parent_node = NameNode(kind=ObjectTypes.ITEMS_TYPE, name=self.category)
         dependencies.add(parent_node)
 
         if self.extra_fields is not None:
@@ -676,11 +1063,35 @@ class ItemSpecManifest(BaseElabObjSpecManifest):
 
         return dependencies
 
+    def to_patch(
+        self,
+        name_node: NameNode,
+        state: _StateInterface,
+        extra_metadata: ElabftwControlConfig | None,
+    ) -> Patch:
+        return Patch.new(
+            name_node=name_node,
+            state=state,
+            extra_metadata=extra_metadata,
+            patch_method=ItemsPatchMethod(),
+        )
 
-class ItemSpecManifestSimplifiedMetadata(BaseElabObjSpecManifest):
-    title: str
-    tags: Optional[Sequence[str]] = None
-    body: Optional[str] = None
+    def to_dict(
+        self,
+        id_resolver: IdResolver,
+        extra_metadata: ElabftwControlConfig | None,
+    ) -> dict[str, Any]:
+        dct = super().get_base_dict()
+        super().add_tags_to_dict(dct)
+        super().add_metadata_to_dict(
+            dct,
+            id_resolver=id_resolver,
+            extra_metadata=extra_metadata,
+        )
+        return dct
+
+
+class ItemSpecManifestSimplifiedMetadata(HasTitleAndBody, HasTags):
     category: str
     color: Optional[str] = None
     extra_fields: SimpleExtraFieldsManifest
@@ -706,8 +1117,6 @@ class ItemSpecManifestSimplifiedMetadata(BaseElabObjSpecManifest):
 
 
 class ItemManifest(BaseElabObjManifest):
-    version: int = 1
-    id: str
     kind: Literal[ObjectTypes.ITEM] = ObjectTypes.ITEM
     spec: ItemSpecManifest | ItemSpecManifestSimplifiedMetadata
 
@@ -718,25 +1127,32 @@ class ItemManifest(BaseElabObjManifest):
             return self.spec
 
 
-class ExperimentSpecManifest(BaseElabObjSpecManifest):
-    title: str
-    tags: Optional[Sequence[str]] = None
-    body: Optional[str] = None
-    template: Optional[str] = None
-    extra_fields: Optional[ExtraFieldsManifest] = None
+class ExperimentPatchMethod:
+    def __call__(self, patch: Patch, api: ElabftwApi) -> None:
+        api.experiments.patch(patch.id, patch.get_patch_body())
+        new_tags = patch.spec.get_tags() or []
+        TagPatch.new(
+            entity_type=EntityTypes.EXPERIMENT,
+            id=patch.id,
+            old=patch.state_obj.tag_map,
+            new=new_tags,
+        ).apply(api)
 
-    def get_parent(self) -> Node | None:
+
+class ExperimentSpecManifest(HasTitleAndBody, HasTags, HasExtraFields):
+    template: Optional[str] = None
+
+    def get_parent(self) -> NameNode | None:
         if self.template is None:
             return None
 
-        return Node(kind=ObjectTypes.EXPERIMENTS_TEMPLATE, name=self.template)
+        return NameNode(kind=ObjectTypes.EXPERIMENTS_TEMPLATE, name=self.template)
 
-
-    def get_dependencies(self) -> set[Node]:
-        dependencies: set[Node] = set()
+    def get_dependencies(self) -> set[NameNode]:
+        dependencies: set[NameNode] = set()
 
         if self.template is not None:
-            parent = Node(kind=ObjectTypes.EXPERIMENTS_TEMPLATE, name=self.template)
+            parent = NameNode(kind=ObjectTypes.EXPERIMENTS_TEMPLATE, name=self.template)
             dependencies.add(parent)
 
         if self.extra_fields is not None:
@@ -744,11 +1160,35 @@ class ExperimentSpecManifest(BaseElabObjSpecManifest):
 
         return dependencies
 
+    def to_patch(
+        self,
+        name_node: NameNode,
+        state: _StateInterface,
+        extra_metadata: ElabftwControlConfig | None,
+    ) -> Patch:
+        return Patch.new(
+            name_node=name_node,
+            state=state,
+            extra_metadata=extra_metadata,
+            patch_method=ExperimentPatchMethod(),
+        )
 
-class ExperimentSpecManifestSimplifiedMetadata(BaseElabObjSpecManifest):
-    title: str
-    tags: Optional[Sequence[str]] = None
-    body: Optional[str] = None
+    def to_dict(
+        self,
+        id_resolver: IdResolver,
+        extra_metadata: ElabftwControlConfig | None,
+    ) -> dict[str, Any]:
+        dct = super().get_base_dict()
+        super().add_tags_to_dict(dct)
+        super().add_metadata_to_dict(
+            dct,
+            id_resolver=id_resolver,
+            extra_metadata=extra_metadata,
+        )
+        return dct
+
+
+class ExperimentSpecManifestSimplifiedMetadata(HasTitleAndBody, HasTags):
     template: str
     extra_fields: SimpleExtraFieldsManifest
 
@@ -773,8 +1213,6 @@ class ExperimentSpecManifestSimplifiedMetadata(BaseElabObjSpecManifest):
 
 
 class ExperimentManifest(BaseElabObjManifest):
-    version: int = 1
-    id: str
     kind: Literal[ObjectTypes.EXPERIMENT] = ObjectTypes.EXPERIMENT
     spec: ExperimentSpecManifest | ExperimentSpecManifestSimplifiedMetadata
 
@@ -807,35 +1245,58 @@ class ElabObjManifests(BaseModel):
 
 
 class _Spec(Protocol):
-    def get_dependencies(self) -> set[Node]: ...
+    def get_tags(self) -> Collection[str] | None: ...
+
+    def get_extra_fields(self) -> ExtraFieldsManifest | None: ...
+
+    def get_dependencies(self) -> set[NameNode]: ...
+
+    def to_patch(
+        self,
+        name_node: NameNode,
+        state: _StateInterface,
+        extra_metadata: ElabftwControlConfig | None,
+    ) -> Patch: ...
+
+    def to_dict(
+        self,
+        id_resolver: IdResolver,
+        extra_metadata: ElabftwControlConfig | None,
+    ) -> dict[str, Any]: ...
 
 
 @dataclass(frozen=True)
 class ManifestIndex:
-    specs: Mapping[Node, _Spec]
-    parents: Mapping[Node, Node]
-    dependency_graph: DependencyGraph[Node]
+    specs: Mapping[NameNode, _Spec]
+    parents: Mapping[NameNode, NameNode]
+    dependency_graph: DependencyGraph[NameNode]
 
-    def get_node_creation_order(self) -> list[Node]:
+    def __getitem__(self, name_node: NameNode) -> _Spec:
+        return self.specs[name_node]
+
+    def __len__(self) -> int:
+        return len(self.specs)
+
+    def get_node_creation_order(self) -> list[NameNode]:
         return self.dependency_graph.get_ordered_nodes()
 
-    def get_node_deletion_order(self) -> list[Node]:
+    def get_node_deletion_order(self) -> list[NameNode]:
         creation_order = self.dependency_graph.get_ordered_nodes()
         creation_order.reverse()
         return creation_order
 
-    def get_node_dependencies(self, node: Node) -> set[Node]:
+    def get_node_dependencies(self, node: NameNode) -> set[NameNode]:
         return self.dependency_graph.get_dependencies(node)
 
     @classmethod
-    def from_manifests(cls, manifests: Iterable[ElabObjManifest]) -> ManifestIndex:
-        manifest_dict: dict[Node, ElabObjManifest] = {}
-        specs: dict[Node, _Spec] = {}
-        parents: dict[Node, Node] = {}
-        dependency_graph: DependencyGraph[Node] = DependencyGraph(flexible=False)
+    def from_manifests(cls, manifests: Iterable[ElabObjManifest]) -> Self:
+        manifest_dict: dict[NameNode, ElabObjManifest] = {}
+        specs: dict[NameNode, _Spec] = {}
+        parents: dict[NameNode, NameNode] = {}
+        dependency_graph: DependencyGraph[NameNode] = DependencyGraph(flexible=False)
 
         for manifest in manifests:
-            new_node = Node(kind=manifest.kind, name=manifest.id)
+            new_node = NameNode(kind=manifest.kind, name=manifest.id)
             manifest_dict[new_node] = manifest
             dependency_graph.add_node(new_node)
 
@@ -846,7 +1307,7 @@ class ManifestIndex:
             ):
                 spec = manifest.spec
             elif isinstance(manifest, ItemManifest):
-                parent_node = Node(ObjectTypes.ITEMS_TYPE, manifest.spec.category)
+                parent_node = NameNode(ObjectTypes.ITEMS_TYPE, manifest.spec.category)
                 item_parent = cast(
                     ItemsTypeManifest,
                     manifest_dict[parent_node],
@@ -857,7 +1318,7 @@ class ManifestIndex:
                 if manifest.spec.template is None:
                     spec = manifest.render_spec(None)
                 else:
-                    parent_node = Node(
+                    parent_node = NameNode(
                         ObjectTypes.EXPERIMENTS_TEMPLATE,
                         manifest.spec.template,
                     )

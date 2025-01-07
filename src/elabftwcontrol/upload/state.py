@@ -9,21 +9,17 @@ from typing_extensions import Self
 
 from elabftwcontrol._logging import logger
 from elabftwcontrol.client import ElabftwApi
-from elabftwcontrol.core.interfaces import HasIDAndMetadataAndDictable, Pathlike
-from elabftwcontrol.core.models import (
-    CLASS_TO_OBJTYPE,
-    OBJTYPE_TO_CLASS,
-    IdNode,
-    NameNode,
-)
+from elabftwcontrol.core.interfaces import ElabApiObjInterface, Pathlike
+from elabftwcontrol.core.models import CLASS_TO_OBJTYPE, OBJTYPE_TO_CLASS, IdNode
 from elabftwcontrol.core.models import ObjectTypes as ElabObjectType
 from elabftwcontrol.core.parsers import MetadataModel, MetadataParser
+from elabftwcontrol.utils import parse_tag_id_str, parse_tag_str
 
 
 @dataclass(frozen=True)
 class TypedObj:
     type: ElabObjectType
-    obj: HasIDAndMetadataAndDictable
+    obj: ElabApiObjInterface
 
 
 class SerializedObj(BaseModel):
@@ -39,11 +35,43 @@ class SerializedState(BaseModel):
     objects: list[SerializedObj]
 
 
+def get_tags(obj: Any) -> list[str]:
+    """Type-unsafe hack to extract tags from objects"""
+    parsed = None
+    if hasattr(obj, "tags"):
+        parsed = parse_tag_str(obj.tags)
+    if parsed is None:
+        parsed = []
+    return parsed
+
+
+def get_tag_ids(obj: Any) -> list[int]:
+    """Type-unsafe hack to extract tag ids from objects"""
+    parsed = None
+    if hasattr(obj, "tag_ids"):
+        parsed = parse_tag_id_str(obj.tag_ids)
+    if parsed is None:
+        parsed = []
+    return parsed
+
+
 @dataclass(frozen=True)
 class EnrichedObj:
     type: ElabObjectType
-    obj: HasIDAndMetadataAndDictable
+    obj: ElabApiObjInterface
     metadata: MetadataModel
+
+    @property
+    def tags(self) -> list[str]:
+        return get_tags(self.obj)
+
+    @property
+    def tag_ids(self) -> list[int]:
+        return get_tag_ids(self.obj)
+
+    @property
+    def tag_map(self) -> dict[str, int]:
+        return {tag: tag_id for tag, tag_id in zip(self.tags, self.tag_ids)}
 
     @classmethod
     def from_typed_obj(
@@ -57,6 +85,14 @@ class EnrichedObj:
             obj=typed_obj.obj,
             metadata=parsed_metadata,
         )
+
+    @property
+    def raw_dict(self) -> dict[str, Any]:
+        return self.obj.to_dict()
+
+    def get_values(self, keys: Iterable[str]) -> dict[str, Any]:
+        raw_dict = self.raw_dict
+        return {key: raw_dict[key] for key in keys}
 
     @property
     def id(self) -> int:
@@ -145,7 +181,7 @@ class State:
     @classmethod
     def from_api_objs(
         cls,
-        api_objs: Iterable[HasIDAndMetadataAndDictable],
+        api_objs: Iterable[ElabApiObjInterface],
     ) -> Self:
         typed_objs = cls._classify_objects(api_objs)
         return cls._from_typed_api_objs(typed_objs, skip_untracked=False)
@@ -204,7 +240,7 @@ class State:
     def _pull(cls, api: ElabftwApi) -> Iterator[TypedObj]:
         """Pull all relevant objects from the API"""
         fetch_jobs: list[
-            tuple[ElabObjectType, Callable[[], Iterable[HasIDAndMetadataAndDictable]]]
+            tuple[ElabObjectType, Callable[[], Iterable[ElabApiObjInterface]]]
         ] = [
             (ElabObjectType.EXPERIMENT, api.experiments.iter),
             (ElabObjectType.ITEM, api.items.iter),
@@ -221,7 +257,7 @@ class State:
     @classmethod
     def _classify_objects(
         cls,
-        api_objs: Iterable[HasIDAndMetadataAndDictable],
+        api_objs: Iterable[ElabApiObjInterface],
     ) -> Iterator[TypedObj]:
         for api_obj in api_objs:
             obj_type = CLASS_TO_OBJTYPE.get(type(api_obj))

@@ -2,29 +2,24 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Callable, Collection, Mapping, NamedTuple, TypeVar
+from typing import Any, Callable, TypeVar
 
 from pydantic import BaseModel, field_serializer
 from typing_extensions import Self
 
 from elabftwcontrol._logging import logger
 from elabftwcontrol.client import ElabftwApi
-from elabftwcontrol.core.manifests import ManifestIndex
+from elabftwcontrol.core.manifests import ManifestIndex, Patch, _Spec
 from elabftwcontrol.core.models import Auth, IdNode, MetadataModel, NameNode
-from elabftwcontrol.upload.state import EnrichedObj, State
+from elabftwcontrol.types import ElabObjectType
+from elabftwcontrol.upload.diff import Diff
+from elabftwcontrol.upload.state import State, EnrichedObj
 
 
 class JobType(Enum):
     CREATE = "create"
     UPDATE = "update"
     DELETE = "delete"
-
-
-class ElabObjectType(Enum):
-    ITEM = "item"
-    ITEMS_TYPE = "items_type"
-    EXPERIMENT = "experiment"
-    EXPERIMENTS_TEMPLATE = "experiments_template"
 
 
 T = TypeVar("T")
@@ -91,6 +86,12 @@ class WorkEvaluatorState:
 
     def get_name(self, node: IdNode) -> NameNode | None:
         return self.id_to_name.get(node)
+
+    def get_state_obj(self, node: IdNode) -> EnrichedObj:
+        return self.elab_state[node]
+
+    def get_manifest(self, node: NameNode) -> _Spec:
+        return self.manifest_index[node]
 
     def contains_id(self, node: IdNode) -> bool:
         return node in self.id_to_name
@@ -182,28 +183,34 @@ class WorkEvaluator:
                 plan.add_task(new_task)
                 new_task = ElabOperation.new_update_obj(
                     name_node=name_node,
-                    patch_data=self.get_create_patch_data(name_node),
+                    patch=self.get_create_patch(name_node),
                     job_state=self.job_state,
                 )
                 plan.add_task(new_task)
 
             else:
-                diff = self.get_diff_patch_data(name_node)
-                if diff:
+                patch = self.get_diff_patch(name_node)
+                if patch:
                     new_task = ElabOperation.new_update_obj(
                         name_node=name_node,
-                        patch_data=diff,
+                        patch=patch,
                         job_state=self.job_state,
                     )
                     plan.add_task(new_task)
 
         return plan
 
-    def get_create_patch_data(self, name_node: NameNode) -> dict[str, Any]:
-        pass
+    def get_create_patch(self, name_node: NameNode) -> Patch:
+        spec = self.manifest_index[name_node]
+        return spec.to_patch(None)
 
-    def get_diff_patch_data(self, name_node: NameNode) -> dict[str, Any]:
-        pass
+    def get_diff_patch(self, name_node: NameNode) -> Patch:
+        id_node = self.job_state.get_id(name_node)
+        if id_node is None:
+            raise ValueError(f"No matching id for {name_node} found")
+        spec = self.manifest_index[name_node]
+        state = self.elab_state[id_node]
+        return spec.to_patch(state)
 
     def evaluate_destroy(self) -> WorkPlan:
         nodes_to_delete = self.manifest_index.get_node_deletion_order()
@@ -222,6 +229,14 @@ class WorkEvaluator:
                 )
 
         return plan
+
+
+class CreationPatch:
+    pass
+
+
+class UpdatePatch:
+    pass
 
 
 @dataclass
@@ -299,7 +314,7 @@ class ElabOperation:
                     raise ValueError
 
         def success_callback(id_node: IdNode) -> None:
-            job_state.add(name_node, id_node)
+            pass
 
         def failure_callback(node: NameNode, error: Exception) -> None:
             raise CreationError(f"{node} failed to be created: {error}")
@@ -321,29 +336,13 @@ class ElabOperation:
     def new_update_obj(
         cls,
         name_node: NameNode,
-        patch_data: dict[str, Any],
+        patch: Patch,
         job_state: WorkEvaluatorState,
     ) -> Self:
-        obj_type = name_node.kind
-
-        def update_method_factory(api: ElabftwApi) -> UpdateMethod:
-            match obj_type:
-                case ElabObjectType.ITEMS_TYPE:
-                    return api.items_types.patch
-                case ElabObjectType.EXPERIMENTS_TEMPLATE:
-                    return api.experiments_templates.patch
-                case ElabObjectType.EXPERIMENT:
-                    return api.experiments.patch
-                case ElabObjectType.ITEM:
-                    return api.items.patch
-                case _:
-                    raise ValueError
-
         action = UpdateObj(
             name_node=name_node,
             job_state=job_state,
-            patch_data=patch_data,
-            update_method_factory=update_method_factory,
+            patch=patch,
         )
 
         def success_callback(id_node: IdNode) -> None:
@@ -387,7 +386,7 @@ class ElabOperation:
         )
 
         def success_callback(id_node: IdNode) -> None:
-            job_state.remove_by_id(id_node)
+            pass
 
         def failure_callback(node: NameNode, error: Exception) -> None:
             raise RuntimeError(f"{node} failed to be deleted: {error}")
@@ -400,10 +399,18 @@ class ElabOperation:
         )
 
 
+_RED = "\033[31m"
+_GREEN = "\033[32m"
+_YELLOW = "\033[33m"
+_RESET = "\033[0m"
+
+
 CreateMethod = Callable[[], int]
 
 
 class CreateObj:
+    """Command for creating a new object and returning an id"""
+
     def __init__(
         self,
         name_node: NameNode,
@@ -415,12 +422,14 @@ class CreateObj:
         self.create_method_factory = create_method_factory
 
     def __str__(self) -> str:
-        return f"- Creation of new {self.name_node}"
+        return f"{_GREEN}+{_RESET} Creation of new {self.name_node}"
 
     def __call__(self, api: ElabftwApi) -> IdNode:
         create_method = self.create_method_factory(api)
         id = create_method()
-        return IdNode(kind=self.name_node.kind, id=id)
+        new_node = IdNode(kind=self.name_node.kind, id=id)
+        self.job_state.add(name=self.name_node, id=new_node)
+        return new_node
 
 
 UpdateMethod = Callable[[int, dict[str, Any]], None]
@@ -430,44 +439,47 @@ class UpdateObj:
     def __init__(
         self,
         name_node: NameNode,
-        patch_data: dict[str, Any],
-        diff: Diff,
+        patch: Patch,
         job_state: WorkEvaluatorState,
-        update_method_factory: Callable[[ElabftwApi], UpdateMethod],
     ) -> None:
         self.name_node = name_node
-        self.patch_data = patch_data
-        self.diff = diff
+        self.patch = patch
         self.job_state = job_state
-        self.update_method_factory = update_method_factory
-
-    def __str__(self) -> str:
-        if self.id_node is not None:
-            return f"""\
-- Patching of {self.name_node} ({self.id_node.id})
-"""
-        else:
-            return f"""\
-- Patching of {self.name_node} (ID unknown)
-"""
-
-    @property
-    def id_node(self) -> IdNode | None:
-        return self.job_state.get_id(self.name_node)
 
     def __call__(self, api: ElabftwApi) -> IdNode:
         if self.id_node is None:
             raise RuntimeError(f"{self.name_node} does not exist.")
 
-        update_method = self.update_method_factory(api)
-        update_method(self.id_node.id, self.patch_data)
+        self.patch(api)
         return self.id_node
+
+    def __str__(self) -> str:
+        if self.id_node is None:
+            id_text = "ID unknown"
+        else:
+            id_text = str(self.id_node.id)
+
+        return f"""\
+{_YELLOW}~{_RESET} Patching of {self.name_node} ({id_text})
+
+    {self.diff.to_str(indent=4)}
+"""
+
+    @property
+    def diff(self) -> Diff:
+        return self.patch.get_diff()
+
+    @property
+    def id_node(self) -> IdNode | None:
+        return self.job_state.get_id(self.name_node)
 
 
 DeleteMethod = Callable[[int], None]
 
 
 class DeleteObj:
+    """Command for deleting an API object and updating the state"""
+
     def __init__(
         self,
         name_node: NameNode,
@@ -478,20 +490,23 @@ class DeleteObj:
         self.name_node = name_node
         self.delete_method_factory = delete_method_factory
 
+    def __call__(self, api: ElabftwApi) -> IdNode:
+        id_node = self.id_node
+        if id_node is None:
+            raise RuntimeError(f"{self.name_node} does not exist.")
+
+        delete_method = self.delete_method_factory(api)
+        delete_method(id_node.id)
+        self.job_state.remove_by_id(id_node)
+        return id_node
+
     def __str__(self) -> str:
         if self.id_node is not None:
-            return f"- Deletion of {self.name_node} ({self.id_node.id})"
+            node_id = str(self.id_node.id)
         else:
-            return f"- Deletion of {self.name_node} (ID unknown)"
+            node_id = "ID unknown"
+        return f"{_RED}-{_RESET} Deletion of {self.name_node} ({node_id})"
 
     @property
     def id_node(self) -> IdNode | None:
         return self.job_state.get_id(self.name_node)
-
-    def __call__(self, api: ElabftwApi) -> IdNode:
-        if self.id_node is None:
-            raise RuntimeError(f"{self.name_node} does not exist.")
-
-        delete_method = self.delete_method_factory(api)
-        delete_method(self.id_node.id)
-        return self.id_node

@@ -5,16 +5,14 @@ from functools import cached_property
 from pathlib import Path
 from typing import (
     Any,
-    Callable,
     Collection,
     Dict,
-    Generic,
     Iterable,
     Iterator,
     List,
     Optional,
+    Protocol,
     Sequence,
-    Type,
     TypeVar,
     Union,
 )
@@ -36,169 +34,16 @@ from elabapi_python import (
     Tag,
     TagsApi,
 )
-from elabapi_python.rest import ApiException
 
 from elabftwcontrol._logging import logger
 from elabftwcontrol.configure import AccessConfig, MultiConfig
 from elabftwcontrol.defaults import DEFAULT_CONFIG_FILE
-from elabftwcontrol.types import (
-    ApiResponseObject,
-    ElabObj,
-    EntityRUD,
-    EntityTypes,
-    GroupEntityCreate,
-    SingleEntityCreate,
-    SingleObjectTypes,
-)
+from elabftwcontrol.types import EntityTypes, SingleObjectTypes
 
 Pathlike = Union[Path, str]
 
-T = TypeVar("T", bound=ElabObj)
 
 DEFAULT_REQUEST_BATCH_SIZE = 1000
-
-
-class ObjectSyncer(Generic[T]):
-    """Serves as an intermediary between the API client and models"""
-
-    def __init__(self, api: ElabftwApi) -> None:
-        self.api = api
-
-    @classmethod
-    def from_config_file(
-        cls,
-        filepath: Optional[Pathlike] = None,
-        profile: Optional[str] = None,
-    ) -> ObjectSyncer:
-        if filepath is None:
-            filepath = DEFAULT_CONFIG_FILE
-        if profile is None:
-            profile = "default"
-        api = ElabftwApi.from_config_file(filepath=filepath, profile=profile)
-        return cls(api)
-
-    def get_api_endpoint(self, elab_obj: T | Type[T]) -> EntityRUD:
-        """Get the API endpoint that matches the object"""
-        return getattr(self.api, elab_obj.obj_type)
-
-    def iter(
-        self,
-        elab_obj_cls: Type[T],
-    ) -> Iterator[T]:
-        """Iterate over remote objects"""
-        api_endpoint = self.get_api_endpoint(elab_obj_cls)
-        return (
-            elab_obj_cls.from_api_data(label=str(obj.id), data=obj)
-            for obj in api_endpoint.iter()
-        )
-
-    def exists(
-        self,
-        elab_obj: T,
-    ) -> bool:
-        """Verify whether a remote version of the object exists."""
-        api_endpoint = self.get_api_endpoint(elab_obj)
-        if elab_obj.id is None:
-            logger.info(f"Object {elab_obj} has no id.")
-            return False
-        else:
-            try:
-                fetched = self._fetch(elab_obj, api_endpoint)
-                return fetched.id == elab_obj.id
-            except ApiException:
-                return False
-            except Exception as e:
-                raise e
-
-    def push(
-        self,
-        elab_obj: T,
-        create_method: Callable[[], int],
-    ) -> None:
-        """Modify the data on an existing remote template and create if it doesn't exist"""
-        api_endpoint = self.get_api_endpoint(elab_obj)
-        if elab_obj.id is None:
-            elab_obj.id = create_method()
-        self._patch(elab_obj, api_endpoint)
-
-    def patch_tags(
-        self,
-        elab_obj: T,
-    ) -> None:
-        tag_endpoint = self.api.tags
-        tags = elab_obj.get("tags")
-        if tags is not None:
-            obj_id = self._verify_has_id(elab_obj)
-            entity_type = elab_obj.obj_type
-            logger.info(f"Patching tags on {elab_obj}.")
-            tag_endpoint.delete(elab_obj.obj_type, entity_id=obj_id)
-            for tag in tags:
-                tag_endpoint.create(
-                    entity_type,
-                    entity_id=obj_id,
-                    tag=tag,
-                )
-
-    def pull(
-        self,
-        elab_obj: T,
-    ) -> None:
-        """Fetch the latest data from the remote and update obj in place"""
-        new_obj = self.fetch(elab_obj)
-        elab_obj.data = new_obj.data
-
-    def delete(
-        self,
-        elab_obj: T,
-    ) -> None:
-        """Delete this template on the remote"""
-        api_endpoint = self.get_api_endpoint(elab_obj)
-        obj_id = self._verify_has_id(elab_obj)
-        api_endpoint.delete(obj_id)
-        elab_obj.id = None
-
-    def fetch(
-        self,
-        elab_obj: T,
-    ) -> T:
-        """Pull the matching data from the remote and return without overwriting"""
-        api_endpoint = self.get_api_endpoint(elab_obj)
-        data = self._fetch(elab_obj, api_endpoint)
-        return elab_obj.from_api_data(label=str(data.id), data=data)
-
-    @classmethod
-    def _fetch(
-        cls,
-        elab_obj: T,
-        api_endpoint: EntityRUD,
-    ) -> ApiResponseObject:
-        id = cls._verify_has_id(elab_obj)
-        return api_endpoint.read(id)
-
-    @classmethod
-    def _patch(
-        cls,
-        elab_obj: T,
-        api_endpoint: EntityRUD,
-    ) -> None:
-        obj_id = cls._verify_has_id(elab_obj)
-        body = cls.prepare_patch_message_body(elab_obj)
-        api_endpoint.patch(obj_id, body)
-
-    @classmethod
-    def prepare_patch_message_body(cls, obj: ElabObj) -> Dict[str, Any]:
-        req_body = {}
-        for field in obj.updatable_fields:
-            value = obj.get(field)
-            if value is not None:
-                req_body[field] = str(value)
-        return req_body
-
-    @classmethod
-    def _verify_has_id(cls, obj: ElabObj) -> int:
-        if obj.id is None:
-            raise ValueError(f"Object {obj} does not have an ID")
-        return obj.id
 
 
 class ElabftwApi:
@@ -297,6 +142,33 @@ class ElabftwApi:
             header_value=configuration.api_key,
         )
         return cls(client=api_client)
+
+
+class ApiResponseObject(Protocol):
+    id: int
+
+    def to_dict(self) -> dict[str, Any]: ...
+
+
+T = TypeVar("T", bound=ApiResponseObject, covariant=True)
+
+
+class EntityRUD(Protocol[T]):
+    def read(self, id: int) -> T: ...
+
+    def iter(self) -> Iterable[T]: ...
+
+    def patch(self, id: int, body: dict[str, Any]) -> None: ...
+
+    def delete(self, id: int) -> None: ...
+
+
+class GroupEntityCreate(Protocol):
+    def create(self) -> int: ...
+
+
+class SingleEntityCreate(Protocol):
+    def create(self, category_id: int) -> int: ...
 
 
 class ItemsTypeCRUD(EntityRUD, GroupEntityCreate):
@@ -713,11 +585,11 @@ class TagCRUD:
         tag: str,
     ) -> None:
         self.api.post_tag(
-            entity_type,
+            entity_type.value,
             entity_id,
             body={"tag": tag},
         )
-        logger.info(f"Added tag '{tag}' to {entity_type} {entity_id}")
+        logger.debug(f"Added tag '{tag}' to {entity_type} {entity_id}")
 
     def read(
         self,
@@ -725,19 +597,33 @@ class TagCRUD:
         entity_id: int,
         tag_id: int,
     ) -> Tag:
-        return self.api.read_tag(entity_type, entity_id, tag_id)
+        return self.api.read_tag(entity_type.value, entity_id, tag_id)
 
     def iter(
         self,
         entity_type: EntityTypes,
         entity_id: int,
     ) -> List[Tag]:
-        return self.api.read_tags(entity_type, entity_id)
+        return self.api.read_tags(entity_type.value, entity_id)
 
     def delete(
         self,
         entity_type: EntityTypes,
         entity_id: int,
+        tag_id: int,
     ) -> None:
-        self.api.delete_tag(entity_type, entity_id)
-        logger.info(f"Deleted all tags from {entity_type} {entity_id}")
+        self.api.patch_tag(
+            entity_type.value,
+            entity_id,
+            tag_id,
+            body={"action": "unreference"},
+        )
+        logger.debug(f"Removed tag {tag_id} from {entity_type.value} {entity_id}")
+
+    def delete_all(
+        self,
+        entity_type: EntityTypes,
+        entity_id: int,
+    ) -> None:
+        self.api.delete_tag(entity_type.value, entity_id)
+        logger.debug(f"Deleted all tags from {entity_type.value} {entity_id}")

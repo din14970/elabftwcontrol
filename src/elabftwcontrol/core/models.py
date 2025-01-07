@@ -9,7 +9,7 @@ from elabapi_python import Experiment, ExperimentTemplate, Item, ItemsType
 from pydantic import BaseModel, Field
 
 from elabftwcontrol._logging import logger
-from elabftwcontrol.core.interfaces import HasIDAndMetadataAndDictable
+from elabftwcontrol.core.interfaces import ElabApiObjInterface
 
 Pathlike = Union[str, Path]
 
@@ -58,14 +58,14 @@ class ObjectTypes(str, Enum):
         return self == self.ITEM or self == self.EXPERIMENT
 
 
-OBJTYPE_TO_CLASS: Mapping[ObjectTypes, Type[HasIDAndMetadataAndDictable]] = {
+OBJTYPE_TO_CLASS: Mapping[ObjectTypes, Type[ElabApiObjInterface]] = {
     ObjectTypes.ITEM: Item,
     ObjectTypes.EXPERIMENT: Experiment,
     ObjectTypes.ITEMS_TYPE: ItemsType,
     ObjectTypes.EXPERIMENTS_TEMPLATE: ExperimentTemplate,
 }
 
-CLASS_TO_OBJTYPE: Mapping[Type[HasIDAndMetadataAndDictable], ObjectTypes] = {
+CLASS_TO_OBJTYPE: Mapping[Type[ElabApiObjInterface], ObjectTypes] = {
     Item: ObjectTypes.ITEM,
     Experiment: ObjectTypes.EXPERIMENT,
     ItemsType: ObjectTypes.ITEMS_TYPE,
@@ -118,7 +118,7 @@ def _safe_parse(
 
 
 class SingleFieldModel(BaseModel):
-    value: Optional[str | list[str]] = None
+    value: Optional[int | str | list[str]] = None
     type: FieldTypeEnum = FieldTypeEnum.text
     options: Optional[list[str]] = None
     allow_multi_values: Optional[bool] = None
@@ -201,18 +201,17 @@ class SingleFieldModel(BaseModel):
 
     @classmethod
     @_safe_parse(return_type="link to an item", fail_value=None)
-    def parse_item_link(cls, value: str) -> Optional[int]:
+    def parse_item_link(cls, value: str | int) -> Optional[int]:
         return cls.parse_link(value)
 
     @classmethod
     @_safe_parse(return_type="link to an experiment", fail_value=None)
-    def parse_experiment_link(cls, value: str) -> Optional[int]:
+    def parse_experiment_link(cls, value: str | int) -> Optional[int]:
         return cls.parse_link(value)
 
     @classmethod
-    def parse_link(cls, value: str) -> int:
-        split = value.split(" - ")
-        return int(split[0])
+    def parse_link(cls, value: str | int) -> int:
+        return int(value)
 
 
 class ElabftwControlConfig(BaseModel):
@@ -225,6 +224,12 @@ class MetadataModel(BaseModel):
     elabftw: ConfigMetadata = ConfigMetadata()
     extra_fields: dict[str, SingleFieldModel] = {}
     elabftwcontrol: ElabftwControlConfig | None = None
+
+    @property
+    def field_dict(self) -> dict[str, dict[str, Any]]:
+        """Extra fields represented as a simple nested dictionary"""
+        dict_dump = self.model_dump(exclude_none=True)
+        return dict_dump["extra_fields"]
 
     @property
     def ordered_fieldnames(self) -> list[str]:

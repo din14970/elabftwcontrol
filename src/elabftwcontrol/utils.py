@@ -80,14 +80,14 @@ def join_dict_values(dicts: Sequence[dict[Any, Any]]) -> dict[Any, list[Any]]:
 
 def parse_tag_str(data: Any) -> Optional[list[str]]:
     if isinstance(data, str):
-        data = data.split("|")
-    return data
+        return data.split("|")
+    return None
 
 
 def parse_tag_id_str(data: Any) -> Optional[list[int]]:
     if isinstance(data, str):
-        data = [int(tag_id) for tag_id in data.split(",")]
-    return data
+        return [int(tag_id) for tag_id in data.split(",")]
+    return None
 
 
 def sanitize_name_for_glue(x: str) -> str:
