@@ -15,7 +15,8 @@ Elabftwcontrol should not to be confused with [elabctl](https://github.com/elabf
 Things elabftwcontrol aims to facilitate:
 * downloading data from experiments and items in various (tabular) formats
 * uploading or mutating experiments and items
-* managing templates, item categories and other eLabFTW resources declaratively with yaml files (partially implemented)
+* managing templates, item categories and other eLabFTW resources declaratively with yaml files
+    * The goal here was similar to what Terraform does. The goal is that this functionality eventually moves to a Terraform provider for eLabFTW.
 
 ⚠️ Elabftwcontrol is currently a work in progress and the API may be prone to change at any time
 
