@@ -1,4 +1,5 @@
-from typing import Any, Mapping, NamedTuple, Collection
+from typing import Any, Collection, Mapping, NamedTuple
+
 from typing_extensions import Self
 
 
@@ -48,7 +49,8 @@ class FieldsToAdd(NamedTuple):
             return False
 
     def to_str(self, indent: int = 0) -> str:
-        return _dict_to_str(data=self.data, marker=f'{_GREEN}+{_RESET}', indent=indent)
+        return _dict_to_str(data=self.data, marker=f"{_GREEN}+{_RESET}", indent=indent)
+
 
 class FieldsToChange(NamedTuple):
     data: Mapping[str, Change]
@@ -60,7 +62,7 @@ class FieldsToChange(NamedTuple):
             return False
 
     def to_str(self, indent: int = 0) -> str:
-        return _dict_to_str(data=self.data, marker=f'{_YELLOW}~{_RESET}', indent=indent)
+        return _dict_to_str(data=self.data, marker=f"{_YELLOW}~{_RESET}", indent=indent)
 
 
 class FieldsToDelete(NamedTuple):
@@ -73,7 +75,9 @@ class FieldsToDelete(NamedTuple):
             return False
 
     def to_str(self, indent: int = 0) -> str:
-        return _sequence_to_str(data=self.data, marker=f'{_RED}-{_RESET}', indent=indent)
+        return _sequence_to_str(
+            data=self.data, marker=f"{_RED}-{_RESET}", indent=indent
+        )
 
 
 class DictComparisonResult(NamedTuple):
@@ -134,11 +138,15 @@ class MetadataFieldsToAdd(NamedTuple):
     def to_str(self, indent: int = 0) -> str:
         result = ""
         for field_name, field_info in self.data.items():
-            result += " " * indent + f"""\
+            result += (
+                " " * indent
+                + f"""\
 {_GREEN}+{_RESET} {field_name}:
 {field_info.to_str(indent + 4)}
 """
+            )
         return result
+
 
 class MetadataFieldsToChange(NamedTuple):
     data: Mapping[str, DictComparisonResult]
@@ -152,10 +160,13 @@ class MetadataFieldsToChange(NamedTuple):
     def to_str(self, indent: int = 0) -> str:
         result = ""
         for field_name, field_info in self.data.items():
-            result += " " * indent + f"""\
+            result += (
+                " " * indent
+                + f"""\
 {_YELLOW}~{_RESET} {field_name}:
 {field_info.to_str(indent + 4)}
 """
+            )
         return result
 
 
@@ -169,7 +180,9 @@ class MetadataFieldsToDelete(NamedTuple):
             return False
 
     def to_str(self, indent: int = 0) -> str:
-        return _sequence_to_str(data=self.data, marker=f'{_RED}-{_RESET}', indent=indent)
+        return _sequence_to_str(
+            data=self.data, marker=f"{_RED}-{_RESET}", indent=indent
+        )
 
 
 class MetadataComparisonResult(NamedTuple):

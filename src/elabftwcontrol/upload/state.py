@@ -165,8 +165,18 @@ class State:
     def __getitem__(self, id_node: IdNode) -> EnrichedObj:
         return self.elab_obj[id_node]
 
+    def get(self, id_node: IdNode) -> EnrichedObj | None:
+        return self.elab_obj.get(id_node)
+
+    def __contains__(self, id_node: IdNode) -> bool:
+        return id_node in self.elab_obj
+
     def __len__(self) -> int:
         return len(self.elab_obj)
+
+    @classmethod
+    def empty(cls) -> Self:
+        return cls({})
 
     @classmethod
     def from_api(

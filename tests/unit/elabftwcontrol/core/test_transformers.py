@@ -200,7 +200,7 @@ class TestMultiPandasDataFrameTransformer:
                 (
                     SplitDataFrame(
                         key="experiments_template",
-                        data= pd.DataFrame(
+                        data=pd.DataFrame(
                             {
                                 "title": ["a 1", "b 2", "a 3", "a 4"],
                                 "other_column": [1, 2, 3, 4],

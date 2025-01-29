@@ -6,7 +6,7 @@ from getpass import getpass
 from pathlib import Path
 from typing import Dict, NamedTuple, Optional, Union
 
-from elabapi_python import Configuration
+from elabapi_python import Configuration  # type: ignore
 from tabulate import tabulate
 
 from elabftwcontrol.defaults import DEFAULT_CONFIG_FILE
@@ -92,7 +92,7 @@ def create_or_append_configuration_file(
 
     host = input("Enter elabAPI endpoint: ").strip()
 
-    verify_ssl = yes_no("Verify SSL?", default_yes=False)
+    verify_ssl = yes_no("Verify SSL?", default_yes=True)
 
     debug = yes_no("Debug mode?", default_yes=False)
 

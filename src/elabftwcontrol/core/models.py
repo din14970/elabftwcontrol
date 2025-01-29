@@ -5,7 +5,12 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Callable, Mapping, NamedTuple, Optional, Type, TypeVar, Union
 
-from elabapi_python import Experiment, ExperimentTemplate, Item, ItemsType
+from elabapi_python import (  # type: ignore
+    Experiment,
+    ExperimentTemplate,
+    Item,
+    ItemsType,
+)
 from pydantic import BaseModel, Field
 
 from elabftwcontrol._logging import logger

@@ -23,6 +23,7 @@ from elabftwcontrol.download import (
     TableCellContentType,
     TableShapes,
 )
+from elabftwcontrol.upload.api import ApplyJob, ApplyJobConfig, ApplyJobType
 
 CMD = "elabftwctl"
 
@@ -263,29 +264,98 @@ def get(
 
 
 @app.command(
-    help="Apply state defined in YAML to eLabFTW",
+    help="Change the state in eLabFTW through state defined in YAML manifest files.",
     no_args_is_help=True,
 )
 def apply(
-    action: Annotated[
+    folder: Annotated[
         Path,
-        typer.Argument(help="Folder in which the metadata.yaml file lives"),
+        typer.Argument(help="Folder in which the manifest files live."),
     ],
+    n_retries: Annotated[
+        int,
+        typer.Option(
+            help="Maximum number of times applies should be retried after failing."
+        ),
+    ] = 3,
+    no_prompt: Annotated[
+        bool,
+        typer.Option(help=("Do not ask for confirmation.")),
+    ] = False,
+    version: Annotated[
+        str | None,
+        typer.Option(
+            help=("Version identifier that should be used to annotate objects.")
+        ),
+    ] = None,
+    dry_run: Annotated[
+        bool,
+        typer.Option(help=("Do not actually apply, just check the changes.")),
+    ] = False,
+    destroy: Annotated[
+        bool,
+        typer.Option(
+            "--destroy",
+            "-d",
+            help="Instead of applying the manifests, destroy all the matching state.",
+        ),
+    ] = False,
+    # state_file: Annotated[
+    #     Path,
+    #     typer.Option(help="Instead of downloading state from eLabFTW it is passed in a file."),
+    # ],
+    # ignore_state: Annotated[
+    #     bool,
+    #     typer.Option(
+    #         help=(
+    #             "Do not check the current state in eLabFTW and assume it is empty. "
+    #             "This can give rise to duplicates!"
+    #         ),
+    #     ),
+    # ] = False,
+    profile: Annotated[
+        Optional[str],
+        typer.Option(
+            help=(
+                f"Name of the eLabFTW connection profile to use, see `{CMD} config`. "
+                "If not set, 'default' is used."
+            ),
+        ),
+    ] = None,
+    verbosity: Annotated[
+        int,
+        typer.Option(
+            "--verbose",
+            "-v",
+            count=True,
+            help="Increase verbosity level.",
+        ),
+    ] = 0,
 ) -> None:
-    pass
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        api = _get_api(profile)
+        _set_logger_verbosity(verbosity)
 
+        if destroy:
+            job_type = ApplyJobType.DESTROY
+        else:
+            job_type = ApplyJobType.CREATE
 
-@app.command(
-    help="Remove state defined in YAML to eLabFTW",
-    no_args_is_help=True,
-)
-def destroy(
-    action: Annotated[
-        Path,
-        typer.Argument(help="Folder in which the metadata.yaml file lives"),
-    ],
-) -> None:
-    pass
+        try:
+            config = ApplyJobConfig(
+                jobtype=job_type,
+                manifest_folder=folder,
+                ignore_state=False,
+                state_file=None,
+                version=version,
+                n_retries=n_retries,
+                no_prompt=no_prompt,
+                dry_run=dry_run,
+            )
+            ApplyJob(api, config)()
+        except Exception as e:
+            logger.critical("%s" % e)
 
 
 def main() -> None:

@@ -7,7 +7,7 @@ import pandas as pd
 try:
     import awswrangler as wr
     from awswrangler.typing import _S3WriteDataReturnValue
-    from s3fs import S3FileSystem
+    from s3fs import S3FileSystem  # type: ignore
 
     S3_ENABLED = True
 except ImportError:

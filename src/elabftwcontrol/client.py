@@ -17,7 +17,7 @@ from typing import (
     Union,
 )
 
-from elabapi_python import (
+from elabapi_python import (  # type: ignore
     ApiClient,
     Experiment,
     ExperimentsApi,

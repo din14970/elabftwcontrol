@@ -8,6 +8,7 @@ class HasIDAndMetadata(Protocol):
     id: int
     metadata: Optional[str]
 
+
 class HasTags(Protocol):
     tags: Optional[str]
 

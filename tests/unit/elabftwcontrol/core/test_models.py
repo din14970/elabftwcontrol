@@ -4,7 +4,6 @@ from typing import Any, Callable, Optional
 
 import pytest
 
-from elabftwcontrol.testing_utils import assert_dicts_equal
 from elabftwcontrol.core.models import (
     ConfigMetadata,
     FieldTypeEnum,
@@ -12,6 +11,7 @@ from elabftwcontrol.core.models import (
     MetadataModel,
     SingleFieldModel,
 )
+from elabftwcontrol.testing_utils import assert_dicts_equal
 
 
 class TestSingleFieldModel:
@@ -73,8 +73,8 @@ class TestSingleFieldModel:
                 datetime(1234, 1, 23, 12, 34),
             ),
             ("12:34", FieldTypeEnum.time, datetime(1900, 1, 1, 12, 34)),
-            ("12 - x - x", FieldTypeEnum.items, 12),
-            ("12 - x - x", FieldTypeEnum.experiments, 12),
+            ("12", FieldTypeEnum.items, 12),
+            ("12", FieldTypeEnum.experiments, 12),
             ("x", FieldTypeEnum.date, None),
             ("x", FieldTypeEnum.datetime_local, None),
             ("x", FieldTypeEnum.time, None),
@@ -144,7 +144,7 @@ class TestSingleFieldModel:
     @pytest.mark.parametrize(
         ("value", "expected"),
         (
-            ("19 - bla - bla", 19),
+            ("19", 19),
             ("x", None),
         ),
     )
@@ -154,7 +154,7 @@ class TestSingleFieldModel:
     @pytest.mark.parametrize(
         ("value", "expected"),
         (
-            ("19 - bla - bla", 19),
+            ("19", 19),
             ("x", None),
         ),
     )
@@ -339,7 +339,7 @@ class TestMetadataModel:
                 ),
                 "f2": SingleFieldModel(value="1", position=1),
                 "f3": SingleFieldModel(
-                    value="234 - something - something",
+                    value="234",
                     type=FieldTypeEnum.items,
                     position=2,
                 ),

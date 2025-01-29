@@ -1,4 +1,5 @@
 from __future__ import annotations
+
 from enum import Enum
 
 
@@ -19,6 +20,3 @@ class EntityTypes(str, Enum):
 class SingleObjectTypes(str, Enum):
     ITEM = EntityTypes.ITEM.value
     EXPERIMENT = EntityTypes.EXPERIMENT.value
-
-
-

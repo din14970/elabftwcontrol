@@ -45,6 +45,7 @@ from elabftwcontrol.core.models import (
 from elabftwcontrol.types import EntityTypes
 from elabftwcontrol.upload.diff import Diff
 from elabftwcontrol.upload.graph import DependencyGraph
+
 # from elabftwcontrol.upload.state import EnrichedObj
 
 Pathlike = Union[str, Path]
@@ -136,7 +137,8 @@ class BaseMetaField(BaseModel):
         """
         data = self.model_dump(exclude_none=True)
         del data["name"]
-        del data["group"]
+        if "group" in data:
+            del data["group"]
         data["group_id"] = group_id
         data["position"] = position
         return data
@@ -171,11 +173,11 @@ class MetadataRadioFieldManifest(BaseMetaField):
 
     def model_post_init(self, __context: Any) -> None:
         if not self.value:
-            self.value = self.options[0]
+            self.value = ""
 
     @model_validator(mode="after")
     def check_consistency(self) -> MetadataRadioFieldManifest:
-        if self.value not in self.options:
+        if self.value not in self.options and self.value != "":
             raise ValueError(
                 f"Field '{self.name}' has value '{self.value}' which is not part of the "
                 f"options: '{self.options}'."
@@ -192,9 +194,9 @@ class MetadataSelectFieldManifest(BaseMetaField):
     def model_post_init(self, __context: Any) -> None:
         if not self.value:
             if self.allow_multi_values:
-                self.value = [self.options[0]]
+                self.value = []
             else:
-                self.value = self.options[0]
+                self.value = ""
 
     @model_validator(mode="after")
     def check_consistency(self) -> MetadataSelectFieldManifest:
@@ -213,7 +215,7 @@ class MetadataSelectFieldManifest(BaseMetaField):
                 raise ValueError(
                     f"Field '{self.name}' has multiple values which is not enabled."
                 )
-            if self.value not in self.options:
+            if self.value not in self.options and self.value != "":
                 raise ValueError(
                     f"Field '{self.name}' has value '{self.value}' which is not part of the "
                     f"options: '{self.options}'."
@@ -471,13 +473,18 @@ LinkedField = MetadataItemsLinkFieldManifest | MetadataExperimentsLinkFieldManif
 class MetadataGroupManifest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     group_name: str
-    sub_fields: List[MetadataFieldManifest]
+    sub_fields: List[MetadataFieldManifest] = []
 
 
 class ExtraFieldsManifest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     config: MetadataManifestConfig = MetadataManifestConfig()
     fields: Sequence[MetadataFieldManifest] = []
+
+    @model_validator(mode="after")
+    def check_consistency(self) -> ExtraFieldsManifest:
+        self.field_map
+        return self
 
     @cached_property
     def field_map(self) -> dict[str, MetadataFieldManifest]:
@@ -650,7 +657,7 @@ class ExtraFieldsManifest(BaseModel):
 class ExtraFieldsManifestComplex(BaseModel):
     model_config = ConfigDict(extra="forbid")
     config: MetadataManifestConfig = MetadataManifestConfig()
-    fields: Sequence[Union[MetadataFieldManifest, MetadataGroupManifest]] = []
+    fields: Sequence[Union[MetadataGroupManifest, MetadataFieldManifest]] = []
 
     def to_full_representation(self) -> ExtraFieldsManifest:
         expanded_fields: list[MetadataFieldManifest] = []
@@ -694,7 +701,9 @@ class SimpleExtraFieldsManifest(BaseModel):
         self,
         parent_extra_fields: ExtraFieldsManifest | ExtraFieldsManifestComplex,
     ) -> ExtraFieldsManifest:
-        extra_fields = parent_extra_fields.to_full_representation()
+        extra_fields = parent_extra_fields.to_full_representation().model_copy(
+            deep=True
+        )
 
         if self.config is not None:
             extra_fields.config = self.config
@@ -752,10 +761,12 @@ class HasTags(BaseModel):
 
 
 class HasExtraFields(BaseModel):
-    extra_fields: Optional[ExtraFieldsManifest] = None
+    extra_fields: ExtraFieldsManifest | ExtraFieldsManifestComplex | None = None
 
     def get_extra_fields(self) -> ExtraFieldsManifest | None:
-        return self.extra_fields
+        if self.extra_fields is None:
+            return None
+        return self.extra_fields.to_full_representation()
 
     def render_metadata(
         self,
@@ -763,7 +774,7 @@ class HasExtraFields(BaseModel):
         extra_metadata: ElabftwControlConfig | None,
     ) -> str:
         extra_fields = self.extra_fields or ExtraFieldsManifest()
-        return extra_fields.to_metadata_str(
+        return extra_fields.to_full_representation().to_metadata_str(
             id_resolver=id_resolver,
             extra_metadata=extra_metadata,
         )
@@ -787,7 +798,11 @@ class _StateInterface(Protocol):
 
     def get_name(self, node: IdNode) -> NameNode | None: ...
 
-    def get_state_obj(self, node: IdNode) -> _ObjStateDataInterface: ...
+    def contains_id(self, node: IdNode) -> bool: ...
+
+    def contains_name(self, node: NameNode) -> bool: ...
+
+    def get_state_obj(self, node: IdNode) -> _ObjStateDataInterface | None: ...
 
     def get_manifest(self, node: NameNode) -> _Spec: ...
 
@@ -848,7 +863,7 @@ class Patch:
         return self.state.get_manifest(self.name_node)
 
     @property
-    def state_obj(self) -> _ObjStateDataInterface:
+    def state_obj(self) -> _ObjStateDataInterface | None:
         return self.state.get_state_obj(self.id_node)
 
     @property
@@ -886,6 +901,19 @@ class Patch:
 
         return body
 
+    def get_tag_patch(self, entity_type: EntityTypes) -> TagPatch:
+        new_tags = self.spec.get_tags() or []
+        if self.state_obj is None:
+            old_tags = {}
+        else:
+            old_tags = self.state_obj.tag_map
+        return TagPatch.new(
+            entity_type=entity_type,
+            id=self.id,
+            old=old_tags,
+            new=new_tags,
+        )
+
     @classmethod
     def new(
         cls,
@@ -915,12 +943,16 @@ class Patch:
 
         id_node = state.get_id(name_node)
         if id_node is None:
-            old_dict = {}
-            old_metadata_fields = {}
+            old_dict: dict[str, Any] = {}
+            old_metadata_fields: dict[str, Any] = {}
         else:
             state_obj = state.get_state_obj(id_node)
-            old_dict = state_obj.get_values(new_dict.keys())
-            old_metadata_fields = state_obj.metadata.field_dict
+            if state_obj is None:
+                old_dict = {}
+                old_metadata_fields = {}
+            else:
+                old_dict = state_obj.get_values(new_dict.keys())
+                old_metadata_fields = state_obj.metadata.field_dict
 
         if "metadata" in old_dict:
             del old_dict["metadata"]
@@ -942,7 +974,14 @@ class Patch:
 
 class ItemsTypePatchMethod:
     def __call__(self, patch: Patch, api: ElabftwApi) -> None:
-        api.items_types.patch(patch.id, patch.get_patch_body())
+        patch_body = patch.get_patch_body()
+        # Due to a weirdness that the API returns color without hash
+        # but as input you must provide a hash
+        if "color" in patch_body:
+            color = patch_body["color"]
+            if not color.startswith("#"):
+                patch_body["color"] = f"#{color}"
+        api.items_types.patch(patch.id, patch_body)
 
 
 class HasTitleBodyAndExtraFields(HasTitleAndBody, HasExtraFields):
@@ -983,10 +1022,11 @@ class ItemsTypeSpecManifest(HasTitleBodyAndExtraFields):
         return None
 
     def get_dependencies(self) -> set[NameNode]:
-        if self.extra_fields is None:
+        extra_fields = self.get_extra_fields()
+        if extra_fields is None:
             return set()
         else:
-            return self.extra_fields.get_dependencies()
+            return extra_fields.get_dependencies()
 
     def to_patch(
         self,
@@ -1004,6 +1044,22 @@ class ItemsTypeSpecManifest(HasTitleBodyAndExtraFields):
             patch_method=ItemsTypePatchMethod(),
         )
 
+    def to_dict(
+        self,
+        id_resolver: IdResolver,
+        extra_metadata: ElabftwControlConfig | None,
+    ) -> dict[str, Any]:
+        dct = super().to_dict(
+            id_resolver=id_resolver,
+            extra_metadata=extra_metadata,
+        )
+        # Due to a weirdness that the API returns color without hash
+        # but as input you must provide a hash
+        if self.color is not None:
+            if self.color.startswith("#"):
+                dct["color"] = self.color.replace("#", "")
+        return dct
+
 
 class ItemsTypeManifest(BaseElabObjManifest):
     kind: Literal[ObjectTypes.ITEMS_TYPE] = ObjectTypes.ITEMS_TYPE
@@ -1013,21 +1069,16 @@ class ItemsTypeManifest(BaseElabObjManifest):
 class ExperimentTemplatePatchMethod:
     def __call__(self, patch: Patch, api: ElabftwApi) -> None:
         api.experiments_templates.patch(patch.id, patch.get_patch_body())
-        new_tags = patch.spec.get_tags() or []
-        TagPatch.new(
-            entity_type=EntityTypes.EXPERIMENTS_TEMPLATE,
-            id=patch.id,
-            old=patch.state_obj.tag_map,
-            new=new_tags,
-        ).apply(api)
+        patch.get_tag_patch(EntityTypes.EXPERIMENTS_TEMPLATE).apply(api)
 
 
 class ExperimentTemplateSpecManifest(HasTitleBodyExtraFieldsAndTags):
     def get_dependencies(self) -> set[NameNode]:
-        if self.extra_fields is None:
+        extra_fields = self.get_extra_fields()
+        if extra_fields is None:
             return set()
         else:
-            return self.extra_fields.get_dependencies()
+            return extra_fields.get_dependencies()
 
     def to_patch(
         self,
@@ -1054,13 +1105,7 @@ class ExperimentTemplateManifest(BaseElabObjManifest):
 class ItemsPatchMethod:
     def __call__(self, patch: Patch, api: ElabftwApi) -> None:
         api.items.patch(patch.id, patch.get_patch_body())
-        new_tags = patch.spec.get_tags() or []
-        TagPatch.new(
-            entity_type=EntityTypes.ITEM,
-            id=patch.id,
-            old=patch.state_obj.tag_map,
-            new=new_tags,
-        ).apply(api)
+        patch.get_tag_patch(EntityTypes.ITEM).apply(api)
 
 
 class _ItemSpecificFields(BaseModel):
@@ -1082,8 +1127,10 @@ class ItemSpecManifest(HasTitleBodyExtraFieldsAndTags, _ItemSpecificFields):
         parent_node = NameNode(kind=ObjectTypes.ITEMS_TYPE, name=self.category)
         dependencies.add(parent_node)
 
-        if self.extra_fields is not None:
-            dependencies = dependencies.union(self.extra_fields.get_dependencies())
+        extra_fields = self.get_extra_fields()
+
+        if extra_fields is not None:
+            dependencies = dependencies.union(extra_fields.get_dependencies())
 
         return dependencies
 
@@ -1154,13 +1201,7 @@ class ItemManifest(BaseElabObjManifest):
 class ExperimentPatchMethod:
     def __call__(self, patch: Patch, api: ElabftwApi) -> None:
         api.experiments.patch(patch.id, patch.get_patch_body())
-        new_tags = patch.spec.get_tags() or []
-        TagPatch.new(
-            entity_type=EntityTypes.EXPERIMENT,
-            id=patch.id,
-            old=patch.state_obj.tag_map,
-            new=new_tags,
-        ).apply(api)
+        patch.get_tag_patch(EntityTypes.EXPERIMENT).apply(api)
 
 
 class _ExperimentSpecificFields(BaseModel):
@@ -1182,8 +1223,9 @@ class ExperimentSpecManifest(HasTitleBodyExtraFieldsAndTags, _ExperimentSpecific
             parent = NameNode(kind=ObjectTypes.EXPERIMENTS_TEMPLATE, name=self.template)
             dependencies.add(parent)
 
-        if self.extra_fields is not None:
-            dependencies = dependencies.union(self.extra_fields.get_dependencies())
+        extra_fields = self.get_extra_fields()
+        if extra_fields is not None:
+            dependencies = dependencies.union(extra_fields.get_dependencies())
 
         return dependencies
 

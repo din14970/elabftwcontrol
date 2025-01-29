@@ -17,7 +17,8 @@ format:
 	uv run isort tests
 
 lint:
-	uv run ruff check
+	uv run ruff check src
+	uv run ruff check tests
 	uv run mypy src
 
 test:

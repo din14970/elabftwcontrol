@@ -14,8 +14,8 @@ from elabftwcontrol.core.manifests import (
     ExperimentSpecManifestSimplifiedMetadata,
     ExperimentTemplateManifest,
     ExperimentTemplateSpecManifest,
-    ExtraFields,
     ExtraFieldsManifest,
+    ExtraFieldsManifestComplex,
     FieldTypeEnum,
     ItemManifest,
     ItemSpecManifest,
@@ -39,7 +39,9 @@ from elabftwcontrol.core.manifests import (
     MetadataTextFieldManifest,
     MetadataTimeFieldManifest,
     MetadataURLFieldManifest,
-    Node,
+)
+from elabftwcontrol.core.manifests import NameNode as Node
+from elabftwcontrol.core.manifests import (
     ObjectTypes,
     SimpleExtraFieldsManifest,
     _ValueAndUnit,
@@ -149,7 +151,7 @@ from elabftwcontrol.core.manifests import (
             MetadataRadioFieldManifest(
                 type=FieldTypeEnum.radio,
                 name="fieldname",
-                value="option 1",
+                value="",
                 options=["option 1", "option 2"],
             ),
             nullcontext(),
@@ -261,7 +263,7 @@ from elabftwcontrol.core.manifests import (
             MetadataSelectFieldManifest(
                 type=FieldTypeEnum.select,
                 name="fieldname",
-                value="option 1",
+                value="",
                 options=["option 1", "option 2"],
             ),
             nullcontext(),
@@ -636,8 +638,8 @@ fields:
         assert verified == expected
 
     def test_extra_fields_get_item(self) -> None:
-        loaded = ExtraFieldsManifest(**self.parsed).to_full_representation()
-        assert loaded["field 1 group 1"] == MetadataSelectFieldManifest(
+        loaded = ExtraFieldsManifestComplex(**self.parsed).to_full_representation()
+        assert loaded.field_map["field 1 group 1"] == MetadataSelectFieldManifest(
             name="field 1 group 1",
             value="option 1",
             type=FieldTypeEnum.select,
@@ -721,20 +723,6 @@ fields:
         )
         assert result == expected
 
-    def test_extra_fields_get_field_names(self) -> None:
-        extra_fields = ExtraFields.parse(**self.parsed_linked)
-        result = extra_fields.field_names
-        expected = [
-            "link 1",
-            "field 2 group 1",
-            "field 1 group 2",
-            "field 3",
-            "field 4",
-            "field 5",
-            "field 6",
-        ]
-        assert result == expected
-
     nested_data = """\
 config:
     display_main_text: false
@@ -759,8 +747,8 @@ fields:
     parsed_nested = yaml.safe_load(nested_data)
 
     def test_nested_extra_fields_manifest(self) -> None:
-        verified = ExtraFieldsManifest(**self.parsed_nested)
-        expected = ExtraFieldsManifest(
+        verified = ExtraFieldsManifestComplex(**self.parsed_nested)
+        expected = ExtraFieldsManifestComplex(
             config=MetadataManifestConfig(
                 display_main_text=False,
             ),
@@ -813,7 +801,7 @@ fields:
     group: group 2
 """
         parsed = yaml.safe_load(data)
-        validated = ExtraFieldsManifest(**parsed)
+        validated = ExtraFieldsManifestComplex(**parsed)
         with pytest.raises(ValueError):
             validated.to_full_representation()
 
@@ -988,9 +976,6 @@ id: items type test
 kind: items_type
 spec:
     title: test item
-    tags:
-        - test tag 1
-        - test tag 2
     body: something
     color: "#123456"
     extra_fields:
@@ -1009,7 +994,6 @@ spec:
         kind=ObjectTypes.ITEMS_TYPE,
         spec=ItemsTypeSpecManifest(
             title="test item",
-            tags=["test tag 1", "test tag 2"],
             body="something",
             color="#123456",
             extra_fields=ExtraFieldsManifest(
@@ -1033,9 +1017,6 @@ id: items type test
 kind: items_type
 spec:
     title: test item
-    tags:
-        - test tag 1
-        - test tag 2
     body: something
     color: "#123456"
     extra_fields:
@@ -1056,10 +1037,9 @@ spec:
         kind=ObjectTypes.ITEMS_TYPE,
         spec=ItemsTypeSpecManifest(
             title="test item",
-            tags=["test tag 1", "test tag 2"],
             body="something",
             color="#123456",
-            extra_fields=ExtraFieldsManifest(
+            extra_fields=ExtraFieldsManifestComplex(
                 fields=[
                     MetadataGroupManifest(
                         group_name="group 1",
@@ -1314,7 +1294,7 @@ spec:
             template="experiment template 1",
             tags=["test tag 1", "test tag 2"],
             body="something",
-            extra_fields=ExtraFieldsManifest(
+            extra_fields=ExtraFieldsManifestComplex(
                 fields=[
                     MetadataGroupManifest(
                         group_name="group 1",
@@ -1385,7 +1365,7 @@ spec:
 """
     parsed = yaml.safe_load(data)
     with pytest.raises(ValueError):
-        ExperimentManifest(**parsed)
+        ExperimentManifest(**parsed).render_spec(None)
 
 
 def test_item_manifest() -> None:
@@ -1653,7 +1633,7 @@ class TestElabObjManifests:
                     kind=ObjectTypes.EXPERIMENTS_TEMPLATE,
                     spec=ExperimentTemplateSpecManifest(
                         title="test experiments template",
-                        extra_fields=ExtraFieldsManifest(
+                        extra_fields=ExtraFieldsManifestComplex(
                             fields=[
                                 MetadataGroupManifest(
                                     group_name="group 1",
@@ -1746,6 +1726,17 @@ class TestManifestIndex:
         manifest = ElabObjManifests(manifests=self.parsed_data)
         index = ManifestIndex.from_manifests(manifest.manifests)
         expected = ManifestIndex(
+            parents={
+                Node(ObjectTypes.ITEM, "item 1"): Node(
+                    ObjectTypes.ITEMS_TYPE, "item type 1"
+                ),
+                Node(ObjectTypes.ITEM, "item 2"): Node(
+                    ObjectTypes.ITEMS_TYPE, "item type 1"
+                ),
+                Node(ObjectTypes.EXPERIMENT, "experiment 2"): Node(
+                    ObjectTypes.EXPERIMENTS_TEMPLATE, "experiment template 1"
+                ),
+            },
             specs={
                 Node(ObjectTypes.ITEM, "item 1"): ItemSpecManifest(
                     title="test item 1",
@@ -1772,7 +1763,9 @@ class TestManifestIndex:
                     category="item type 1",
                     extra_fields=None,
                 ),
-                Node(ObjectTypes.EXPERIMENT, "experiment 1"): ExperimentSpecManifest(title="test experiment 1"),
+                Node(ObjectTypes.EXPERIMENT, "experiment 1"): ExperimentSpecManifest(
+                    title="test experiment 1"
+                ),
                 Node(ObjectTypes.EXPERIMENT, "experiment 2"): ExperimentSpecManifest(
                     title="test experiment 2",
                     template="experiment template 1",
@@ -1790,9 +1783,11 @@ class TestManifestIndex:
                         ]
                     ),
                 ),
-                Node(ObjectTypes.EXPERIMENTS_TEMPLATE, "experiment template 1"): ExperimentTemplateSpecManifest(
+                Node(
+                    ObjectTypes.EXPERIMENTS_TEMPLATE, "experiment template 1"
+                ): ExperimentTemplateSpecManifest(
                     title="test experiments template",
-                    extra_fields=ExtraFieldsManifest(
+                    extra_fields=ExtraFieldsManifestComplex(
                         fields=[
                             MetadataGroupManifest(
                                 group_name="group 1",

@@ -20,8 +20,8 @@ from pydantic import BaseModel, model_validator
 from elabftwcontrol._logging import logger
 from elabftwcontrol.client import ElabftwApi, Experiment, Item
 from elabftwcontrol.core.interfaces import Category, Dictable
-from elabftwcontrol.core.parsers import MetadataParser
 from elabftwcontrol.core.metadata import ParsedMetadataToPandasDtype
+from elabftwcontrol.core.parsers import MetadataParser
 from elabftwcontrol.core.transformers import (
     JSONTransformer,
     MultiPandasDataFrameTransformer,

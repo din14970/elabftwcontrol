@@ -30,6 +30,7 @@ class MetadataParser:
 
 class TagParser:
     """Parses tags from an API object"""
+
     def __call__(self, data: str | None) -> list[str]:
         if data is None:
             return []
@@ -42,6 +43,7 @@ class TagParser:
 
 class TagIdParser:
     """Parses tag ids from an API object"""
+
     def __call__(self, data: str | None) -> list[int]:
         if data is None:
             return []

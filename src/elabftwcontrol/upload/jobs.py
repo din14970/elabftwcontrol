@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Callable, TypeVar
+from typing import Any, Callable, Iterator, TypeVar
 
 from typing_extensions import Self
 
@@ -41,8 +41,8 @@ class WorkEvaluatorState:
     def get_name(self, node: IdNode) -> NameNode | None:
         return self.id_to_name.get(node)
 
-    def get_state_obj(self, node: IdNode) -> EnrichedObj:
-        return self.elab_state[node]
+    def get_state_obj(self, node: IdNode) -> EnrichedObj | None:
+        return self.elab_state.get(node)
 
     def get_manifest(self, node: NameNode) -> _Spec:
         return self.manifest_index[node]
@@ -190,12 +190,52 @@ class WorkEvaluator:
 class WorkPlan:
     tasks: list[ElabOperation]
 
+    def __bool__(self) -> bool:
+        return len(self.tasks) > 0
+
+    def _to_str_iter(self) -> Iterator[str]:
+        for task in self.tasks:
+            yield str(task)
+
+    def print_to_console(
+        self,
+        print_fn: Callable[[Any], None] = print,
+    ) -> None:
+        for text in self._to_str_iter():
+            print_fn(text)
+
+    @property
+    def n_tasks(self) -> int:
+        return len(self.tasks)
+
     @classmethod
     def new(cls) -> Self:
         return cls([])
 
     def add_task(self, task: ElabOperation) -> None:
         self.tasks.append(task)
+
+    def execute(
+        self,
+        client: ElabftwApi,
+        start: int = 0,
+        n_retries: int = 5,
+    ) -> None:
+        for i, task in enumerate(self.tasks[start:], start=start):
+            error: Exception
+            for retry in range(n_retries):
+                try:
+                    logger.info(
+                        f"Attempting task ({i+1}/{self.n_tasks}), try ({retry+1}/{n_retries})"
+                    )
+                    task(client)
+                    break
+                except Exception as e:
+                    error = e
+            else:
+                logger.error(f"Failed on task {i}")
+                raise error
+        logger.info(f"Completed the work plan of {self.n_tasks}")
 
 
 class ElabOperationError(Exception): ...
@@ -216,6 +256,9 @@ class ElabOperation:
     action: Callable[[ElabftwApi], IdNode]
     success_callback: Callable[[IdNode], None] | None
     failure_callback: Callable[[NameNode, Exception], None] | None
+
+    def __str__(self) -> str:
+        return str(self.action)
 
     def __call__(self, api: ElabftwApi) -> None:
         try:
@@ -409,7 +452,7 @@ class UpdateObj:
         return f"""\
 {_YELLOW}~{_RESET} Patching of {self.name_node} ({id_text})
 
-    {self.diff.to_str(indent=4)}
+{self.diff.to_str(indent=4)}
 """
 
     @property
