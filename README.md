@@ -69,13 +69,11 @@ $ uv tool install elabftwcontrol
 
 If you want to be able to write to Excel or AWS S3, you must provide these as optional dependency groups: `elabftwcontrol[excel,aws]`.
 
-## Usage
-
-### CLI
+## CLI Usage
 
 Use the `elabftwctl` command to interact with eLabFTW. Check out the options via `--help`.
 
-#### Configuring and managing profiles
+### Configuring and managing profiles
 
 In order to connect to eLabFTW, you must tell Elabftwcontrol which endpoint and token it should use.
 Elabftwcontrol stores this information in `~/.elabftwcontrol.json` in the form of different "profiles".
@@ -101,7 +99,7 @@ You can delete a profile with
 $ elabftwcontrol config delete --profile <profile name>
 ```
 
-#### Extracting data
+### Extracting data
 
 At this moment, only items, experiments, item types and experiment templates are supported
 
@@ -189,7 +187,7 @@ For tabular formats, the options are as follows:
 --sanitize-column-names
 ```
 
-#### Defining and applying state
+### Defining and applying state
 
 >⚠️ This functionality is very similar to what a [Terraform](https://www.terraform.io/) provider would do.
 > Therefore, the intention is that this functionality will be migrated in the future to a proper TF provider.
@@ -398,7 +396,7 @@ How does Elabftwcontrol *know* which items and templates to update? This is done
 The `version` stored in the metadata can be either passed through the CLI, or is parsed automatically from the git hash if your manifests are tracked by git.
 In this way, if your template evolves, you will be able to associate it back to a git hash, and you will be able to distinguish which items correspond to the same version of the template.
 
-### Python
+## Useage as a Python library
 
 Documentation and examples are a work in progress, at this moment you will have to look through the code.
 The main reason you would use Elabftwcontrol as a library, is to download the data directly as a `pandas` dataframe.
