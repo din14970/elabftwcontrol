@@ -1,21 +1,9 @@
 from __future__ import annotations
 
-import csv
 import re
 import warnings
-from datetime import date, datetime
 from pathlib import Path
-from typing import (
-    Any,
-    Callable,
-    Dict,
-    Iterable,
-    List,
-    Optional,
-    Sequence,
-    TypeVar,
-    Union,
-)
+from typing import Any, Iterable, Optional, Sequence, TypeVar, Union
 
 import pandas as pd
 import yaml
@@ -36,17 +24,17 @@ def number_to_base(n: int, base: int) -> list[int]:
     return digits[::-1]
 
 
-def read_yaml(filepath: Pathlike) -> Union[Dict, List]:
+def read_yaml(filepath: Pathlike) -> Union[dict, list]:
     with open(filepath, "r") as f:
         data = yaml.safe_load(f)
     return data
 
 
 def compare_dicts(
-    new_dict: Dict[str, Any],
-    old_dict: Dict[str, Any],
+    new_dict: dict[str, Any],
+    old_dict: dict[str, Any],
     ignore_none_values: bool = False,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """See what has changed to a dict compared to an old version"""
     if ignore_none_values:
         new_values = set((k, v) for k, v in new_dict.items() if v is not None)
@@ -67,24 +55,7 @@ def sanitize_column_names(df: pd.DataFrame) -> pd.DataFrame:
     return df.rename(columns=sanitize)
 
 
-def df_to_excel(df: pd.DataFrame, filepath: Pathlike) -> None:
-    df.to_excel(
-        filepath,
-        index=False,
-    )
-
-
-def df_to_csv(df: pd.DataFrame, filepath: Pathlike) -> None:
-    df.to_csv(
-        filepath,
-        index=False,
-        sep=";",
-        escapechar="\\",
-        quoting=csv.QUOTE_ALL,
-    )
-
-
-def join_dict_values(dicts: Sequence[Dict[Any, Any]]) -> Dict[Any, List[Any]]:
+def join_dict_values(dicts: Sequence[dict[Any, Any]]) -> dict[Any, list[Any]]:
     """Join multiple dictionaries on the key and merge the values in a list per key.
     If input dicts miss a key, None is inserted for that dict in the list.
     """
@@ -98,7 +69,7 @@ def join_dict_values(dicts: Sequence[Dict[Any, Any]]) -> Dict[Any, List[Any]]:
         )
         iter_keys = all_output_keys
 
-    output_dict: Dict[Any, List[Any]] = {k: [] for k in iter_keys}
+    output_dict: dict[Any, list[Any]] = {k: [] for k in iter_keys}
 
     for dct in dicts:
         for k in iter_keys:
@@ -107,44 +78,64 @@ def join_dict_values(dicts: Sequence[Dict[Any, Any]]) -> Dict[Any, List[Any]]:
     return output_dict
 
 
-def lists_in_dict_are_same_length(dct: Dict[Any, List[Any]]) -> bool:
-    """Check whether list values in a dict are all the same lenght"""
-    return len(set(map(len, dct.values()))) == 1
+def parse_tag_str(data: Any) -> Optional[list[str]]:
+    if isinstance(data, str):
+        return data.split("|")
+    return None
 
 
-def parse_optional(
-    value: Optional[T],
-    parse_func: Callable[[T], V],
-) -> Optional[V]:
-    if value is None or value == "" or value == "None":
-        return None
-    else:
-        return parse_func(value)
+def parse_tag_id_str(data: Any) -> Optional[list[int]]:
+    if isinstance(data, str):
+        return [int(tag_id) for tag_id in data.split(",")]
+    return None
 
 
-def parse_optional_datetime(value: Optional[str]) -> Optional[datetime]:
-    return parse_optional(
-        value,
-        lambda x: datetime.strptime(x, "%Y-%m-%d %H:%M:%S"),
-    )
+def sanitize_name_for_glue(x: str) -> str:
+    """Convert any string to one that is valid for Glue.
+
+    The following rules apply:
+    * shorter than 255 characters
+    * only letters, numbers and underscores
+
+    Whitespace and non alphanumeric characters are converted to underscores.
+    Greek letters are spelled out with regular letters.
+    If at the end underscores are doubled or trailing, those are also removed.
+    """
+    simpled = x.lower().replace(" ", "_")
+    greek_letter_replace_map = {
+        "α": "alpha_",
+        "β": "beta_",
+        "γ": "gamma_",
+        "δ": "delta_",
+        "ε": "epsilon_",
+        "ζ": "zeta_",
+        "η": "eta_",
+        "θ": "theta_",
+        "ι": "iota_",
+        "κ": "kappa_",
+        "λ": "lambda_",
+        "μ": "mu_",
+        "ν": "nu_",
+        "ξ": "xi_",
+        "ο": "omicron_",
+        "π": "pi_",
+        "ρ": "rho_",
+        "σ": "sigma_",
+        "ς": "sigma_",
+        "τ": "tau_",
+        "υ": "upsilon_",
+        "φ": "phi_",
+        "χ": "chi_",
+        "ψ": "psi_",
+        "ω": "omega_",
+    }
+    for greek, ascii in greek_letter_replace_map.items():
+        simpled = simpled.replace(greek, ascii)
+    simpled = re.sub(r"[^a-z0-9_]+", "_", simpled)
+    simpled = re.sub(r"__+", "_", simpled).rstrip("_")
+    simpled = simpled[: min(255, len(simpled))]
+    return simpled
 
 
-def parse_optional_date(value: Optional[str]) -> Optional[date]:
-    def parse_date_flexible(value: str) -> date:
-        try:
-            return datetime.strptime(value, "%Y-%m-%d").date()
-        except ValueError:
-            return datetime.strptime(value, "%Y-%m-%d %H:%M:%S").date()
-
-    return parse_optional(
-        value,
-        parse_date_flexible,
-    )
-
-
-def parse_optional_float(value: Optional[str]) -> Optional[float]:
-    return parse_optional(value, float)
-
-
-def parse_optional_int(value: Optional[str]) -> Optional[int]:
-    return parse_optional(value, int)
+def do_nothing(x: T) -> T:
+    return x

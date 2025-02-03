@@ -17,11 +17,15 @@ format:
 	uv run isort tests
 
 lint:
-	uv run ruff check
+	uv run ruff check src
+	uv run ruff check tests
 	uv run mypy src
 
 test:
-	uv run pytest -v
+	uv run pytest -vv
+
+test-debug:
+	uv run pytest --pdb -vv
 
 requirements:
 	uv lock

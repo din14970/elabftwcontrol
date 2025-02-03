@@ -1,7 +1,3 @@
-from datetime import date, datetime
-from pathlib import Path
-from tempfile import TemporaryDirectory
-
 import pandas as pd
 
 import elabftwcontrol.utils as utils
@@ -42,27 +38,3 @@ def test_join_dict_values() -> None:
         "e": [None, None, 3],
     }
     assert result == expected
-
-
-def test_lists_in_dict_same_length() -> None:
-    d = {1: [1, 2, 3], 2: [1, 2]}
-    assert not utils.lists_in_dict_are_same_length(d)
-    d = {1: [1, 2, 3], 2: [1, 2, 3]}
-    assert utils.lists_in_dict_are_same_length(d)
-
-
-def test_parse_optional_datetime() -> None:
-    assert utils.parse_optional_datetime("2023-08-12 12:13:14") == datetime(
-        2023, 8, 12, 12, 13, 14
-    )
-    assert utils.parse_optional_datetime(None) is None
-
-
-def test_parse_optional_date() -> None:
-    assert utils.parse_optional_date("2023-08-12") == date(2023, 8, 12)
-    assert utils.parse_optional_date(None) is None
-
-
-def test_parse_optional_float() -> None:
-    assert abs(utils.parse_optional_float("8.32") - 8.32) < 1e-7
-    assert utils.parse_optional_float(None) is None
