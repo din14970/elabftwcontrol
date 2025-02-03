@@ -252,6 +252,7 @@ def get(
                 categories=category,
                 indent=indent,
                 expand_metadata=expand_metadata,
+                table_shape=table_shape,
                 use_template_metadata_schema=use_template_metadata_schema,
                 cell_content=cell_content,
                 sanitize_column_names=sanitize_column_names,
