@@ -24,7 +24,7 @@ A very common problem faced by researchers who work in the lab is how to keep tr
 Researchers must somehow keep an overview of physical samples, experiments, data, projects, suppliers, collaborators, and more, as well as all their interrelationships.
 Eventually, all research efforts start resembling a graph structure.
 
-![The graph structure of research](data/challenge.svg)
+![The graph structure of research](data/challenge.png)
 
 The most diligent researchers track all of their work in a physical notebook.
 Still, this makes it difficult to keep track of everything at the level of a team, or do perform analyses or queries on the information.
