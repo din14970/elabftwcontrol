@@ -26,6 +26,7 @@ from elabapi_python import (  # type: ignore
     InfoApi,
     Item,
     ItemsApi,
+    ItemsBody,
     ItemsType,
     ItemsTypesApi,
     Link,
@@ -33,6 +34,8 @@ from elabapi_python import (  # type: ignore
     LinksToItemsApi,
     Tag,
     TagsApi,
+    Upload,
+    UploadsApi,
 )
 
 from elabftwcontrol._logging import logger
@@ -78,6 +81,10 @@ class ElabftwApi:
     @cached_property
     def experiments_templates(self) -> ExperimentTemplateCRUD:
         return ExperimentTemplateCRUD.from_client(self.client)
+
+    @cached_property
+    def uploads(self) -> UploadsCRUD:
+        return UploadsCRUD.from_client(self.client)
 
     @cached_property
     def tags(self) -> TagCRUD:
@@ -246,7 +253,8 @@ class ItemsTypeCRUD(EntityRUD, GroupEntityCreate):
         id: int,
         body: Dict[str, Any],
     ) -> None:
-        self.api.patch_items_type(id, body=body)
+        logger.debug(f"Patch body: {body}")
+        self.api.patch_items_type(id, body=ItemsType(**body))
         logger.info(f"Patched category {id}")
 
     def delete(
@@ -300,6 +308,21 @@ class ExperimentTemplateCRUD(EntityRUD, GroupEntityCreate):
         template_map = {template.id: template for template in all_templates}
         return [template_map[id] for id in ids]
 
+    def iter_full(
+        self,
+        ids: Optional[Iterable[int]] = None,
+    ) -> List[ExperimentTemplate]:
+        if not ids:
+            templates = self.iter()
+            ids = (template.id for template in templates)
+
+        threads = []
+        for category_id in ids:
+            threads.append(
+                self.api.get_experiment_template(category_id, async_req=True)
+            )
+        return [thread.get() for thread in threads]
+
     def patch(self, id: int, body: Dict[str, Any]) -> None:
         self.api.patch_experiment_template(id, body=body)
         logger.info(f"Patched template {id}")
@@ -334,7 +357,7 @@ class ItemCRUD(EntityRUD, SingleEntityCreate):
 
     def create(self, category_id: int) -> int:
         _, _, response = self.api.post_item_with_http_info(
-            body={"category_id": category_id}
+            body=ItemsBody(category_id=category_id)
         )
         new_item_id = self._get_new_item_id(response)
         logger.info(f"Created item {new_item_id}")
@@ -374,6 +397,23 @@ class ItemCRUD(EntityRUD, SingleEntityCreate):
                 break
 
             read_number_of_items += self.read_batch_size
+
+    def iter_full(
+        self,
+        ids: Optional[Iterable[int]] = None,
+        **kwargs: Any,
+    ) -> Iterator[Item]:
+        """Request all items individually to fetch all information"""
+        if not ids:
+            items = self.iter()
+            ids = (item.id for item in items)
+
+        threads = []
+        for item_id in ids:
+            threads.append(self.api.get_item(item_id, async_req=True, **kwargs))
+
+        for thread in threads:
+            yield thread.get()
 
     def patch(self, id: int, body: Dict[str, Any]) -> None:
         self.api.patch_item(id, body=body)
@@ -450,6 +490,25 @@ class ExperimentCRUD(EntityRUD, SingleEntityCreate):
 
             read_number_of_experiments += self.read_batch_size
 
+    def iter_full(
+        self,
+        ids: Optional[Iterable[int]] = None,
+        **kwargs: Any,
+    ) -> Iterator[Experiment]:
+        """Request all experiments individually to fetch all information"""
+        if not ids:
+            experiments = self.iter()
+            ids = (experiment.id for experiment in experiments)
+
+        threads = []
+        for experiment_id in ids:
+            threads.append(
+                self.api.get_experiment(experiment_id, async_req=True, **kwargs)
+            )
+
+        for thread in threads:
+            yield thread.get()
+
     def patch(self, id: int, body: Dict[str, Any]) -> None:
         self.api.patch_experiment(id, body=body)
         logger.info(f"Patched experiment {id}")
@@ -460,6 +519,77 @@ class ExperimentCRUD(EntityRUD, SingleEntityCreate):
 
     def _get_new_experiment_id(self, response: Any) -> int:
         return int(response.get("Location").split("/")[-1])
+
+
+class UploadsCRUD:
+    def __init__(
+        self,
+        api: UploadsApi,
+    ) -> None:
+        self.api = api
+
+    @classmethod
+    def from_client(cls, api_client: ApiClient) -> UploadsCRUD:
+        return cls(api=UploadsApi(api_client))
+
+    def iter(self, entity_type: SingleObjectTypes, id: int) -> list[Upload]:
+        return self.api.read_uploads(entity_type.value, id)
+
+    def read(
+        self,
+        entity_type: SingleObjectTypes,
+        id: int,
+        sub_id: int,
+    ) -> bytes:
+        return self.api.read_upload(
+            entity_type=entity_type.value,
+            id=id,
+            subid=sub_id,
+            format="binary",
+            _preload_content=False,
+        )
+
+    def patch(
+        self,
+        entity_type: SingleObjectTypes,
+        id: int,
+        sub_id: int,
+        file: bytes,
+        comment: str,
+    ) -> None:
+        self.api.post_upload_replace(
+            entity_type=entity_type.value,
+            id=id,
+            subid=sub_id,
+            file=file,
+            comment=comment,
+        )
+
+    def create(
+        self,
+        entity_type: SingleObjectTypes,
+        id: int,
+        file: bytes,
+        comment: str,
+    ) -> None:
+        self.api.post_upload(
+            entity_type=entity_type.value,
+            id=id,
+            file=file,
+            comment=comment,
+        )
+
+    def delete(
+        self,
+        entity_type: SingleObjectTypes,
+        id: int,
+        sub_id: int,
+    ) -> None:
+        self.api.delete_upload(
+            entity_type=entity_type.value,
+            id=id,
+            subid=sub_id,
+        )
 
 
 class LinkCRUD:
