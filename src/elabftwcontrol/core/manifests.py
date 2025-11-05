@@ -100,7 +100,7 @@ class BaseMetaField(BaseModel):
         May need to be overridden by base classes, particularly linked fields
         """
         field_data = model.model_dump(exclude_none=True)
-        field_members = cast(dict[str, Any], cls.__fields__).keys()
+        field_members = cast(dict[str, Any], cls.model_fields).keys()
         extracted_field_data: dict[str, Any] = {
             "name": name,
             "group": group,
@@ -463,7 +463,7 @@ MetadataFieldManifest = Annotated[
 
 _metadata_field_name_to_manifest_map: dict[str, Type[_MetadataFieldType]] = {
     # some hackery to extract the type name directly from the type definition
-    get_args(field_type.__fields__["type"].annotation)[0]: field_type
+    get_args(field_type.model_fields["type"].annotation)[0]: field_type
     for field_type in get_args(_MetadataFieldType)
 }
 

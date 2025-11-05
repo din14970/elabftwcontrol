@@ -123,7 +123,7 @@ def _safe_parse(
 
 
 class SingleFieldModel(BaseModel):
-    value: Optional[int | str | list[str]] = None
+    value: Optional[int | float | str | list[str]] = None
     type: FieldTypeEnum = FieldTypeEnum.text
     options: Optional[list[str]] = None
     allow_multi_values: Optional[bool] = None

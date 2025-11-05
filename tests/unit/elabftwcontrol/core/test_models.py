@@ -37,6 +37,22 @@ class TestSingleFieldModel:
             ),
             (
                 {
+                    "type": "number",
+                    "value": 2.3,
+                    "unit": "kg",
+                    "group_id": "1",
+                    "position": "3",
+                },
+                SingleFieldModel(
+                    type=FieldTypeEnum.number,
+                    value=2.3,
+                    unit="kg",
+                    group_id=1,
+                    position=3,
+                ),
+            ),
+            (
+                {
                     "value": ["select 1", "select 2"],
                     "type": "select",
                     "options": ["select 1", "select 2", "select 3"],

@@ -22,7 +22,7 @@ class MetadataParser:
         try:
             data = json.loads(obj_metadata)
         except (TypeError, json.JSONDecodeError) as e:
-            logger.warn(f"Metadata obj object could not be parsed as valid JSON:\n{e}")
+            logger.warning(f"Metadata obj object could not be parsed as valid JSON:\n{e}")
             return {}
 
         return data
@@ -37,7 +37,7 @@ class TagParser:
         try:
             return data.split("|")
         except Exception:
-            logger.warn(f"Data `{data}` could not be parsed as tags")
+            logger.warning(f"Data `{data}` could not be parsed as tags")
         return []
 
 
@@ -50,5 +50,5 @@ class TagIdParser:
         try:
             return [int(tag_id.strip()) for tag_id in data.split(",")]
         except Exception:
-            logger.warn(f"Data `{data}` could not be parsed as tag ids")
+            logger.warning(f"Data `{data}` could not be parsed as tag ids")
         return []
