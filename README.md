@@ -1,3 +1,5 @@
+> ⚠️  This project was migrated to [Codeberg](https://github.com/elabftw/elabctl](https://codeberg.org/din14970/elabftwcontrol) and this repo was archived.
+
 <p align="left">
 <a href="https://github.com/din14970/elabftwcontrol/actions"><img alt="Actions Status" src="https://github.com/din14970/elabftwcontrol/workflows/build/badge.svg"></a>
 <a href="https://pypi.org/project/elabftwcontrol/"><img alt="PyPI" src="https://img.shields.io/pypi/v/elabftwcontrol.svg?style=flat"></a>
